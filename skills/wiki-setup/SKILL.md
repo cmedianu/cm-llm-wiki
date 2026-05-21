@@ -1,45 +1,36 @@
 ---
 name: wiki-setup
 description: >
-  Initialize a new Obsidian wiki vault with the correct structure, special files, and configuration.
+  Initialize a new Obsidian wiki vault with the correct structure and special files.
   Use this skill when the user wants to set up a new wiki from scratch, initialize the vault structure,
-  create the .env file, or says things like "set up my wiki", "initialize obsidian", "create a new vault",
+  or says things like "set up my wiki", "initialize obsidian", "create a new vault",
   "get started with the wiki". Also use when the user needs to reconfigure their existing vault or
-  fix a broken setup.
+  fix a broken setup. A default vault needs no .env — paths are derived from the vault location.
 ---
 
 # Obsidian Setup — Vault Initialization
 
 You are setting up a new Obsidian wiki vault (or repairing an existing one).
 
-## Step 1: Create .env
+## Step 1: Pick the Vault Location
 
-If `.env` doesn't exist, create it from `.env.example`. Ask the user for:
+Ask the user where the vault should live (e.g. `~/Documents/obsidian-wiki-vault`). The vault is self-describing: its directory contains `.manifest.json`, and every other path the skills need is derived from there by default (`<vault>/_sources/` for raw inputs, `<vault>/_archives/` for snapshots, `$HOME/.claude/projects` for Claude history).
 
-1. **Where should the vault live?** → `OBSIDIAN_VAULT_PATH`
-   - Default: `~/Documents/obsidian-wiki-vault`
-   - Must be an absolute path (after expansion)
+**No `.env` file is created at setup.** Skills work without one. Only create `<vault>/.env` later if the user wants to override a default — e.g. sources living outside the vault, or Claude history at a non-standard path. Even then, never put `OBSIDIAN_VAULT_PATH` in it: the vault is defined by where `.manifest.json` lives, not by an absolute path baked into a config file.
 
-2. **Where are your source documents?** → `OBSIDIAN_SOURCES_DIR`
-   - Can be multiple paths, comma-separated
-   - Default: `~/Documents`
+Optional integrations the user may also want (still no `.env` required unless overriding):
 
-3. **Want to import Claude history?** → `CLAUDE_HISTORY_PATH`
-   - Default: auto-discovers from `~/.claude`
-   - Set explicitly if Claude data is elsewhere
-
-4. **Have QMD installed?** → `QMD_WIKI_COLLECTION` / `QMD_PAPERS_COLLECTION` / `QMD_TRANSPORT`
-   - Optional. Enables semantic search in `wiki-query` and source discovery in `wiki-ingest`.
-   - Default to `QMD_TRANSPORT=mcp` unless the user wants the agent to call the local `qmd` CLI directly.
-   - If using CLI mode, set `QMD_CLI_SEARCH_MODE=quality` by default; suggest `balanced` if reranking is too slow.
-   - If unsure, skip for now — both skills fall back to `Grep` automatically.
-   - Install instructions: see `.env.example` (QMD section).
+- **QMD semantic search.** Enables semantic search in `wiki-query` and source discovery in `wiki-ingest`. Defaults to `QMD_TRANSPORT=mcp`; CLI mode uses `QMD_CLI_SEARCH_MODE=quality`. If unsure, skip — both skills fall back to `Grep` automatically.
 
 ## Step 2: Create Vault Directory Structure
 
 ```bash
-mkdir -p "$OBSIDIAN_VAULT_PATH"/{concepts,entities,skills,references,synthesis,journal,projects,_archives,_raw,.obsidian}
+VAULT=<path-from-step-1>
+mkdir -p "$VAULT"/{concepts,entities,skills,references,synthesis,journal,projects,_archives,_sources,.obsidian}
+echo '{"version":1,"sources":{},"projects":{},"stats":{}}' > "$VAULT/.manifest.json"
 ```
+
+The `.manifest.json` is the canonical vault marker — its presence is what every skill walks up the CWD looking for.
 
 - `.obsidian/` — Obsidian's own config. Creates vault recognition.
 - `projects/` — Per-project knowledge (populated during ingest).
@@ -148,18 +139,18 @@ Tell the user about these recommended community plugins (they install manually):
 ## Step 6: Verify Setup
 
 Run a quick sanity check:
-- [ ] Vault directory exists with: `concepts/`, `entities/`, `skills/`, `references/`, `synthesis/`, `journal/`, `projects/`, `_archives/`, `_raw/`
+- [ ] Vault directory exists with: `concepts/`, `entities/`, `skills/`, `references/`, `synthesis/`, `journal/`, `projects/`, `_archives/`, `_sources/`
+- [ ] `.manifest.json` exists at vault root (the canonical vault marker)
 - [ ] `index.md` exists at vault root
 - [ ] `log.md` exists at vault root
 - [ ] `hot.md` exists at vault root
-- [ ] `.env` has `OBSIDIAN_VAULT_PATH` set
 - [ ] `.obsidian/` directory exists
-- [ ] Source directories (if configured) exist and are readable
+- [ ] Walking up from a subdirectory inside the vault finds `.manifest.json` (relocatability check)
 
 Report the results and tell the user they can now:
 1. Open the vault in Obsidian (File → Open Vault → select the directory)
 2. Run `wiki-status` to see what's available to ingest
 3. Run `wiki-ingest` to add their first sources
-4. Run `claude-history-ingest` to mine their Claude conversations
+4. Run `wiki-claude-history` to mine their Claude conversations
 5. Run `codex-history-ingest` to mine their Codex sessions (if they use Codex)
 6. Run `wiki-status` again anytime to check the delta

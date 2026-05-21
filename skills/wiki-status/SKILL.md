@@ -16,7 +16,7 @@ You are computing the current state of the wiki: what's been ingested, what's ne
 
 ## Before You Start
 
-1. **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md` (walk up CWD for `.env` → `~/.obsidian-wiki/config` → prompt setup). This gives `OBSIDIAN_VAULT_PATH`, `OBSIDIAN_SOURCES_DIR`, `CLAUDE_HISTORY_PATH`, and `CODEX_HISTORY_PATH`.
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
 2. Read `.manifest.json` at the vault root — this is the ingest tracking ledger
 
 ## The Manifest
@@ -208,7 +208,7 @@ You'll reuse this graph across all sections below.
 1. **Anchor pages (top hubs).** Pages with the most incoming links — the load-bearing concepts.
    - Rank all pages by `incoming` count, take top 10
    - For each, note both incoming and outgoing counts: pages with high incoming *and* high outgoing are connector hubs (most valuable)
-   - Pages with high incoming but zero outgoing are sink hubs — flag as cross-linker candidates
+   - Pages with high incoming but zero outgoing are sink hubs — flag as wiki-link candidates
 
 2. **Bridge pages.** Pages that connect otherwise-disconnected tag clusters — removing them would partition the graph. These are often more structurally important than raw hub count suggests.
    - For each page P, find pairs of pages (A, B) where:
@@ -222,7 +222,7 @@ You'll reuse this graph across all sections below.
    - `n` = number of pages sharing this tag
    - `actual_links` = number of wikilinks between any two pages in this tag group
    - `cohesion = actual_links / (n × (n−1) / 2)` — ratio of actual links to maximum possible
-   - **Fragmented clusters** (cohesion < 0.15, n ≥ 5): these pages share a topic but aren't woven together. Surface them as cross-linker targets.
+   - **Fragmented clusters** (cohesion < 0.15, n ≥ 5): these pages share a topic but aren't woven together. Surface them as wiki-link targets.
    - Show top 5 tags by cohesion (strongest clusters) and bottom 5 (most fragmented)
 
 4. **Surprising connections.** Cross-category wikilinks that are non-obvious — scored by how unexpected they are:
@@ -233,7 +233,7 @@ You'll reuse this graph across all sections below.
      - **+2** if source page has ≤ 2 total links (peripheral) but target has ≥ 8 (hub) — unexpected reach from edge to center
    - Show top 5 scored connections with a plain-language reason for each
 
-5. **Orphan-adjacent suggestions.** Pages linked from a top-10 hub but with zero outgoing links of their own. Dead-ends in high-traffic areas — prime cross-linker candidates.
+5. **Orphan-adjacent suggestions.** Pages linked from a top-10 hub but with zero outgoing links of their own. Dead-ends in high-traffic areas — prime wiki-link candidates.
 
 6. **Rough clusters.** Group anchor pages by dominant tag. (Simple tag intersection — just for orientation.)
 
@@ -264,7 +264,7 @@ Write the result to `_insights.md` at the vault root. Overwrite freely — it's 
 | Page | Incoming | Outgoing | Note |
 |---|---|---|---|
 | [[concepts/transformer-architecture]] | 23 | 8 | connector hub |
-| [[entities/andrej-karpathy]] | 17 | 0 | sink hub — cross-linker candidate |
+| [[entities/andrej-karpathy]] | 17 | 0 | sink hub — wiki-link candidate |
 
 ## Bridge Pages (top 5)
 | Page | Bridges | Cross-cluster pairs |
@@ -274,8 +274,8 @@ Write the result to `_insights.md` at the vault root. Overwrite freely — it's 
 ## Tag Cluster Cohesion
 ### Most cohesive (well-linked)
 - **#ml** — 12 pages, cohesion 0.41
-### Most fragmented (cross-linker targets)
-- **#systems** — 7 pages, cohesion 0.06 ⚠️ run cross-linker on this tag
+### Most fragmented (wiki-link targets)
+- **#systems** — 7 pages, cohesion 0.06 ⚠️ run wiki-link on this tag
 
 ## Surprising Connections (top 5)
 - [[concepts/scaling-laws]] → [[entities/gordon-moore]] — score 5
@@ -317,5 +317,5 @@ After writing the file, append to `log.md`:
 
 - If the manifest doesn't exist, report everything as "new" and recommend a full ingest
 - This skill only reads and reports — it doesn't modify anything (except writing `_insights.md` in insights mode, which is regenerable)
-- The actual ingest work is done by the ingest skills (`wiki-ingest`, `claude-history-ingest`, `codex-history-ingest`, `data-ingest`)
+- The actual ingest work is done by the ingest skills (`wiki-ingest`, `wiki-claude-history`, `codex-history-ingest`, `data-ingest`)
 - Those skills are responsible for updating the manifest after they finish

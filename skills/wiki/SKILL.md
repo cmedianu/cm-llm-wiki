@@ -1,5 +1,5 @@
 ---
-name: llm-wiki
+name: wiki
 description: >
   The foundational knowledge distillation pattern for building and maintaining an AI-powered Obsidian wiki.
   Based on Andrej Karpathy's LLM Wiki architecture. Use this skill whenever the user wants to understand the
@@ -19,13 +19,13 @@ Based on Andrej Karpathy's LLM Wiki pattern — <https://gist.github.com/karpath
 
 ### Layer 1: Raw Sources (immutable)
 
-The user's original documents — articles, papers, notes, PDFs, conversation logs, bookmarks, **and images** (screenshots, whiteboard photos, diagrams). Never modified by the system. Located via `OBSIDIAN_SOURCES_DIR` in `.env`. Images are first-class sources for vision-capable models; non-vision models skip them and report which were skipped.
+The user's original documents — articles, papers, notes, PDFs, conversation logs, bookmarks, **and images** (screenshots, whiteboard photos, diagrams). Never modified by the system. Live at `<vault>/_sources/` by default. Images are first-class sources for vision-capable models; non-vision models skip them and report which were skipped.
 
 Think of raw sources as the "source code" — authoritative but hard to query directly.
 
 ### Layer 2: The Wiki (LLM-maintained)
 
-A collection of interconnected Obsidian-compatible markdown files. This is the compiled knowledge — synthesized, cross-referenced, navigable. Each page has YAML frontmatter, Obsidian `[[wikilinks]]`, and clear provenance for its claims. Lives at `OBSIDIAN_VAULT_PATH`.
+A collection of interconnected Obsidian-compatible markdown files. This is the compiled knowledge — synthesized, cross-referenced, navigable. Each page has YAML frontmatter, Obsidian `[[wikilinks]]`, and clear provenance for its claims. The vault is the directory containing `.manifest.json` — that file is the canonical marker.
 
 ### Layer 3: The Schema (this skill + config)
 
@@ -33,7 +33,9 @@ The rules governing how the wiki is structured — categories, conventions, page
 
 ## Wiki Organization
 
-Organize pages into folders that match your domain. Declare them in `OBSIDIAN_CATEGORIES` (comma-separated). Two patterns work well:
+Organize pages into folders that match your domain. **Categories are discovered from disk**, not declared in config: any top-level directory not prefixed with `_` or `.` is a category. `_foo/` is system state (`_sources/`, `_archives/`), `.foo/` is tool config (`.obsidian/`, `.claude/`). Everything else is content.
+
+Two patterns work well:
 
 - **Domain folders** — folder names mirror the subjects of the notes (`AI/`, `Health/`, `Recipes/`, etc.). Natural for hand-authored personal wikis.
 - **Karpathy taxonomy** — `concepts/`, `entities/`, `skills/`, `references/`, `synthesis/`, `journal/`. Natural for external-source distillation; less so for hand-authored notes.
@@ -114,6 +116,47 @@ Use [[wikilinks]] to connect to related pages.
 - [[references/attention-is-all-you-need]] — Original paper
 ```
 
+### URL sources
+
+`sources:` is a YAML list of strings. Each entry is either a vault-relative path or a full URL (leading `http://` / `https://` is the discriminator). Mix freely:
+
+```yaml
+sources:
+  - _sources/web/martinfowler-microservices-2014.md   # local snapshot
+  - https://martinfowler.com/articles/microservices.html   # original URL
+  - _sources/papers/attention-is-all-you-need.pdf   # file source
+  - https://example.com/see-also   # URL-only, no snapshot
+```
+
+**Recommended:** snapshot + URL (two entries) for any URL that is **evidence** for a non-trivial claim. Snapshot first (what `wiki-lint` verifies), URL second (what a reader clicks).
+
+**URL-only** (one entry) is acceptable only for ephemera — "see also" pointers whose removal would not weaken any claim on the page.
+
+Snapshot conventions:
+
+- Path: `_sources/web/<slug>.md`
+- Slug: kebab-case, derived from `<domain>-<title-or-slug>-<year>`, e.g. `martinfowler-microservices-2014.md`, `instructables-carbon-quantum-dots-2019.md`
+- Format: Markdown preferred (clean grep target). HTML alongside (`<slug>.html`) only when conversion loses important structure. PDFs unchanged.
+- Manifest entry keyed by the snapshot path, with `source_type: "url"`, `source_url:`, `fetched_at:`, `content_hash:`.
+
+`wiki-lint` flags URL-only `sources:` entries that 404 and downgrades dependent claims to `^[ambiguous]` until a snapshot is added.
+
+### Folder naming convention
+
+Top-level folders (categories) and subfolders both use **kebab-case-lowercase**, matching the filename convention. Examples: `ai/`, `git/`, `mcp/`, `science-fair/`, `team-meta/`.
+
+Why: consistent with kebab-case filenames, URL-safe, no shift-key ambiguity, plays nicely with Obsidian wikilink resolution (case-insensitive on Windows but case-sensitive on Linux/WSL — lowercase removes the footgun).
+
+Exceptions that may keep TitleCase: none enforced, but if you prefer prettier sidebar display in Obsidian and only ever access the vault on Windows/macOS (case-insensitive), TitleCase top-level folders work too. Pick one style per vault — mixing is what breaks.
+
+**To rename a category:**
+
+1. Run `.claude/wiki-scripts/kebab-rename.py` (or a folder-only variant) — it renames the folder, rewrites every wikilink that referenced the old path, and re-keys the manifest in lockstep. Use `DRY_RUN=1` first.
+2. Update the section heading in `index.md`.
+3. Append a `RECATEGORIZE` entry to `log.md`.
+
+To **add** a category: `mkdir <name>` at the vault root. No config edit needed — skills discover it on next read. To **remove** a category: move its pages elsewhere first, then `rmdir`. To **hide a top-level directory from category discovery** (e.g. a scratch area you don't want ingest to write into), rename it with a `_` prefix.
+
 Optional frontmatter fields (ingest skills may populate; hand-authored pages can omit):
 
 - `aliases:` — alternate names this page should also resolve as.
@@ -152,7 +195,7 @@ Reading the vault is the dominant cost of every read-side skill. Use the cheapes
 
 The rule: if `summary:` fields answer it, don't read page bodies. If a grepped section with `-A 10 -B 2` gives the claim, don't read the whole page. A 500-line page opened to read 15 lines is 485 lines of wasted tokens.
 
-This is how the framework scales to large vaults without a database. Skills consuming this table: `wiki-query`, `cross-linker`, `wiki-lint`, `wiki-status`.
+This is how the framework scales to large vaults without a database. Skills consuming this table: `wiki-query`, `wiki-link`, `wiki-lint`, `wiki-status`.
 
 ## Core Principles
 
@@ -174,52 +217,89 @@ Controlled by `OBSIDIAN_LINK_FORMAT` from the resolved config (default: `wikilin
 
 For markdown mode: compute the path from the current file's directory to the target `.md` file using `..` to climb up; always include the `.md` extension. The `[[path|display]]` wikilink form maps to `[display](relative/path.md)` in markdown mode.
 
-The setting affects only newly written or updated links — existing content is never auto-migrated. Run `cross-linker` or `wiki-lint` to convert old links if needed.
+The setting affects only newly written or updated links — existing content is never auto-migrated. Run `wiki-link` or `wiki-lint` to convert old links if needed.
 
 ## Config Resolution Protocol
 
-**All skills must resolve config using this algorithm — don't hard-code `.env` or `~/.obsidian-wiki/config` directly.** This is how single-vault, multi-vault, and project-local setups coexist.
+The vault is self-describing — **no `.env` file is needed** for a default setup. The vault is the directory containing `.manifest.json`; everything else has a sensible default derived from that location.
 
-1. **Walk up from CWD** — look for a `.env` containing `OBSIDIAN_VAULT_PATH`, stopping at the first match (up to `$HOME`).
-2. **Global config** — if no local `.env`, read `~/.obsidian-wiki/config`.
-3. **Prompt setup** — if neither exists, tell the user: "No config found. Run `wiki-setup` to initialize."
+### Vault discovery
+
+1. **Walk up from CWD** — look for `.manifest.json`, stopping at the first match (up to `$HOME` or `/`).
+2. **Global config** — if no vault found and `~/.obsidian-wiki/config` exists, read `VAULT` from it.
+3. **Prompt setup** — if neither, tell the user: "No vault found. Run `wiki-setup` to initialize."
 
 ```bash
-find_config() {
+find_vault() {
   dir="$PWD"
-  while [[ "$dir" != "$HOME" && "$dir" != "/" ]]; do
-    [[ -f "$dir/.env" ]] && grep -q "OBSIDIAN_VAULT_PATH" "$dir/.env" && { echo "$dir/.env"; return; }
+  while [[ "$dir" != "/" ]]; do
+    [[ -f "$dir/.manifest.json" ]] && { echo "$dir"; return; }
+    [[ "$dir" == "$HOME" ]] && break
     dir="$(dirname "$dir")"
   done
-  [[ -f "$HOME/.obsidian-wiki/config" ]] && { echo "$HOME/.obsidian-wiki/config"; return; }
-  echo ""
+  [[ -f "$HOME/.obsidian-wiki/config" ]] && grep -m1 '^VAULT=' "$HOME/.obsidian-wiki/config" | cut -d= -f2-
 }
 ```
 
+### Defaults derived from the vault location
+
+| Setting | Default | Override |
+|---|---|---|
+| Vault root | directory containing `.manifest.json` | n/a — it's the marker |
+| Sources dir | `<vault>/_sources` | `.env` (rare) |
+| Archives dir | `<vault>/_archives` | `.env` (rare) |
+| Link format | `wikilink` | `.env` |
+| Claude history | `$HOME/.claude/projects` if it exists | `.env` |
+
+Skills MUST infer defaults from the vault location and only read `.env` to apply overrides. A vault with no `.env` is the expected case.
+
+### `.env` is optional (and discouraged)
+
+A `.env` file at the vault root is supported for overriding any of the defaults above, but should be **absent** when defaults suffice. Keeping `.env` empty/absent is what makes the vault relocatable: `cp -r <vault> /elsewhere && cd /elsewhere` must work without edits. Hard-coded absolute paths in `.env` break that guarantee.
+
 ### Vault-scoped state
 
-Skills writing runtime state must scope it to the resolved vault, not a global path:
+Skills writing runtime state outside the vault must scope it by vault location, not a global path:
 
 ```bash
-VAULT_ID=$(echo "$OBSIDIAN_VAULT_PATH" | md5sum 2>/dev/null | cut -c1-8)
+VAULT_ID=$(echo "$VAULT" | md5sum 2>/dev/null | cut -c1-8)
 STATE_DIR="$HOME/.obsidian-wiki/state/$VAULT_ID"
 ```
+
+The vault path is the input to the hash — copying the vault elsewhere produces a new scope, which is the desired behavior (the new vault is a different instance).
 
 ### Standard "Before You Start" block
 
 Every skill's setup section should read:
 
-> **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md`. Walk up from CWD for `.env`, fall back to `~/.obsidian-wiki/config`, else prompt setup. This gives `OBSIDIAN_VAULT_PATH` and any tool-specific path overrides.
+> **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only to apply overrides.
 
-## Environment Variables
+## Relocatability Invariant
 
-Only `OBSIDIAN_VAULT_PATH` is required.
+The vault is the unit of relocation. A vault must satisfy this invariant:
 
-- `OBSIDIAN_VAULT_PATH` — Where the wiki lives **(required)**
-- `OBSIDIAN_SOURCES_DIR` — Where raw source documents are
-- `OBSIDIAN_CATEGORIES` — Comma-separated top-level folder/category names
+> **Copy-paste works.** `cp -r <vault> <new-location> && cd <new-location>` must produce a fully functional wiki without editing any file.
+
+This rules out:
+
+- Absolute paths inside the vault pointing back to itself
+- `.env` files that hard-code the vault location
+- Manifest entries keyed by absolute paths (relative paths only)
+- Symlinks pointing to absolute paths inside the vault
+
+The skills follow this. If you find a script that violates it, that's a bug.
+
+## Environment Variables (all optional)
+
+A vault works with zero environment configuration. Set these in `<vault>/.env` only when you need to override a default:
+
+- `OBSIDIAN_SOURCES_DIR` — Override the `_sources/` default
 - `OBSIDIAN_LINK_FORMAT` — `wikilink` (default) or `markdown`
-- `CLAUDE_HISTORY_PATH` — Where Claude session data lives (for `claude-history-ingest`)
+- `CLAUDE_HISTORY_PATH` — Override the `$HOME/.claude/projects` default (for `wiki-claude-history`)
+
+`OBSIDIAN_VAULT_PATH` is **deprecated** — the vault is the directory containing `.manifest.json`, not whatever an env var claims. Skills that still read it will treat it as a deprecation warning.
+
+Categories are not declared in config; they are discovered from disk (any top-level dir not prefixed with `_` or `.`).
 
 No API keys needed — the agent running these skills already has LLM access built in.
 
@@ -250,8 +330,8 @@ Companion skills (`../`):
 - **wiki-research** — Multi-round web research, auto-file results
 - **wiki-synthesize** — Cross-page synthesis pages
 - **wiki-switch** — Manage multiple vault profiles
-- **cross-linker** — Discover and insert missing wikilinks
-- **claude-history-ingest** — Mine `~/.claude` session data into the wiki
+- **wiki-link** — Discover and insert missing wikilinks
+- **wiki-claude-history** — Mine `~/.claude` session data into the wiki
 
 Maintenance scripts (`../../scripts/`):
 

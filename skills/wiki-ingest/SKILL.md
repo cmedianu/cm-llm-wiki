@@ -15,12 +15,12 @@ You are ingesting source documents into an Obsidian wiki. Your job is not to sum
 
 ## Before You Start
 
-1. **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md` (walk up CWD for `.env` → `~/.obsidian-wiki/config` → prompt setup). This gives `OBSIDIAN_VAULT_PATH`, `OBSIDIAN_SOURCES_DIR`, and `OBSIDIAN_LINK_FORMAT` (default: `wikilink`). Only read the specific variables you need — do not log, echo, or reference any other values from these files.
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
 2. Read `.manifest.json` at the vault root to check what's already been ingested
 3. Read `index.md` to understand current wiki content
 4. Read `log.md` to understand recent activity
 
-When writing internal links in Step 5, apply the link format described in `llm-wiki/SKILL.md` (Link Format section) according to the `OBSIDIAN_LINK_FORMAT` value you read.
+When writing internal links in Step 5, apply the link format described in `wiki/SKILL.md` (Link Format section) according to the `OBSIDIAN_LINK_FORMAT` value you read.
 
 ## Content Trust Boundary
 
@@ -187,7 +187,7 @@ Before writing anything, plan which pages to update or create. Aim for 10-15 pag
 For each page in your plan:
 
 **If creating a new page:**
-- Use the page template from the llm-wiki skill (frontmatter + sections)
+- Use the page template from the wiki skill (frontmatter + sections)
 - Place in the correct category directory
 - Add `[[wikilinks]]` to at least 2-3 existing pages
 - Include the source in the `sources` frontmatter field
@@ -204,12 +204,12 @@ For each page in your plan:
 **Add confidence and lifecycle fields** to every new page's frontmatter:
 
 ```yaml
-base_confidence: <computed>   # [0.0, 1.0] — see llm-wiki/SKILL.md Confidence formula
+base_confidence: <computed>   # [0.0, 1.0] — see wiki/SKILL.md Confidence formula
 lifecycle: draft
 lifecycle_changed: "<ISO date today>"
 ```
 
-Compute `base_confidence` using the formula from `llm-wiki/SKILL.md` (Confidence and Lifecycle section):
+Compute `base_confidence` using the formula from `wiki/SKILL.md` (Confidence and Lifecycle section):
 - Count distinct source_ids for this page
 - Classify each source's quality bucket
 - `base_confidence = min(N/3, 1.0) × 0.5 + avg_quality × 0.5`
@@ -223,7 +223,7 @@ When **updating** an existing page, recompute `base_confidence` only if sources 
 
 `visibility/` tags are system tags and do **not** count toward the 5-tag limit. When in doubt, omit — untagged pages are treated as public. Never add a visibility tag just because a topic sounds technical.
 
-**Apply provenance markers** per the convention in `llm-wiki` (Provenance Markers section):
+**Apply provenance markers** per the convention in `wiki` (Provenance Markers section):
 - Inferred claims get a trailing `^[inferred]`
 - Ambiguous/contested claims get a trailing `^[ambiguous]`
 - Extracted claims need no marker

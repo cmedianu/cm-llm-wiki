@@ -14,11 +14,11 @@ You are preserving knowledge from the current conversation as a permanent wiki n
 
 ## Before You Start
 
-1. **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md` (walk up CWD for `.env` → `~/.obsidian-wiki/config` → prompt setup). This gives `OBSIDIAN_VAULT_PATH` and `OBSIDIAN_LINK_FORMAT` (default: `wikilink`).
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
 2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand existing wiki content (avoid duplicates)
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it gives context on recent activity
 
-When writing internal links in Step 5, apply the link format from `llm-wiki/SKILL.md` (Link Format section) using the `OBSIDIAN_LINK_FORMAT` value.
+When writing internal links in Step 5, apply the link format from `wiki/SKILL.md` (Link Format section) using the `OBSIDIAN_LINK_FORMAT` value.
 
 ## Step 1: Identify What's Worth Preserving
 
@@ -62,7 +62,7 @@ Do **not** write a summary of the conversation. Write the knowledge itself, in d
 - Not: "We decided to use Y because..."
 - Yes: "Y is preferred over Z because [reason]. [^[inferred] if the rationale was implied, not stated explicitly]"
 
-Apply provenance markers per `llm-wiki`:
+Apply provenance markers per `wiki`:
 - *Extracted* — explicitly stated in the conversation (no marker)
 - *Inferred* — generalized or synthesized from the conversation → `^[inferred]`
 - *Ambiguous* — disputed, uncertain, or contradictory → `^[ambiguous]`

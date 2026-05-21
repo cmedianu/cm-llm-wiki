@@ -1,5 +1,5 @@
 ---
-name: claude-history-ingest
+name: wiki-claude-history
 description: >
   Ingest Claude Code conversation history into the Obsidian wiki. Use this skill when the user wants to mine
   their past Claude conversations for knowledge, import their ~/.claude folder, extract insights from
@@ -16,7 +16,7 @@ This skill can be invoked directly or via the `wiki-history-ingest` router (`/wi
 
 ## Before You Start
 
-1. **Resolve config** — follow the Config Resolution Protocol in `llm-wiki/SKILL.md` (walk up CWD for `.env` → `~/.obsidian-wiki/config` → prompt setup). This gives `OBSIDIAN_VAULT_PATH` and `CLAUDE_HISTORY_PATH` (defaults to `~/.claude`)
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).claude`)
 2. Read `.manifest.json` at the vault root to check what's already been ingested
 3. Read `index.md` at the vault root to know what the wiki already contains
 
@@ -284,7 +284,7 @@ lifecycle_changed: <ISO date today>
 ```
 On update, leave `lifecycle` and `lifecycle_changed` unchanged — only a human editor transitions lifecycle state.
 
-**Mark provenance** per the convention in `llm-wiki` (Provenance Markers section):
+**Mark provenance** per the convention in `wiki` (Provenance Markers section):
 
 - **Memory files** are mostly extracted — the user wrote them by hand and they're already distilled. Treat memory-derived claims as extracted unless you're stitching together claims from multiple memory files.
 - **Conversation distillation** is mostly inferred. You're synthesizing a coherent claim from many turns of dialogue, often filling in implicit reasoning. Apply `^[inferred]` liberally to synthesized patterns, generalizations across sessions, and "what the user really meant" interpretations.

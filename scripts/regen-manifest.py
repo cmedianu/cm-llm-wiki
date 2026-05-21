@@ -16,22 +16,34 @@ import pathlib
 
 
 def find_vault() -> pathlib.Path:
-    """Resolve the active vault: OBSIDIAN_VAULT_PATH env var, else walk up
-    from CWD looking for a .env with OBSIDIAN_VAULT_PATH=..."""
+    """Resolve the active vault by walking up from CWD looking for .manifest.json
+    (the canonical vault marker). The regen-manifest case is special: if no
+    .manifest.json exists yet but we're being asked to create one, accept a
+    REGEN_AT env var or fall back to CWD as the vault root. .env override is
+    kept for backward compatibility."""
+    cwd = pathlib.Path.cwd()
+    for d in [cwd] + list(cwd.parents):
+        if (d / ".manifest.json").is_file():
+            return d
+        if d == pathlib.Path("/"):
+            break
+    # Bootstrapping case: no manifest exists yet
+    regen_at = os.environ.get("REGEN_AT")
+    if regen_at:
+        return pathlib.Path(regen_at)
     env = os.environ.get("OBSIDIAN_VAULT_PATH")
     if env:
         return pathlib.Path(env)
-    cwd = pathlib.Path.cwd()
-    home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
         f = d / ".env"
         if f.exists():
             for line in f.read_text(encoding="utf-8").splitlines():
                 if line.startswith("OBSIDIAN_VAULT_PATH="):
                     return pathlib.Path(line.split("=", 1)[1].strip().strip('"').strip("'"))
-        if d == home:
+        if d == pathlib.Path.home():
             break
-    raise SystemExit("OBSIDIAN_VAULT_PATH not set and no .env found walking up from CWD")
+    raise SystemExit("No vault found. Walk up from CWD found no .manifest.json. "
+                     "To bootstrap a new vault, run from inside it or set REGEN_AT=<vault-path>.")
 
 
 VAULT = find_vault()
