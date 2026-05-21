@@ -5,11 +5,13 @@ restore if any cut turns out to be useful in practice.
 
 ## How to restore a cut
 
-Every removed section still exists in the upstream:
-<https://github.com/Ar9av/obsidian-wiki>. To pull the old text:
+Every removed section still exists in the upstream (note: it lives at
+`.skills/`, a hidden directory). Pinning to commit `6f20faa` so the
+links don't rot if upstream changes:
 
 ```sh
-curl -fsSL "https://raw.githubusercontent.com/Ar9av/obsidian-wiki/main/skills/llm-wiki/SKILL.md" > /tmp/upstream.md
+SHA=6f20faa
+curl -fsSL "https://raw.githubusercontent.com/Ar9av/obsidian-wiki/$SHA/.skills/llm-wiki/SKILL.md" > /tmp/upstream.md
 # then copy the section you want back into the current file
 ```
 
@@ -17,7 +19,8 @@ Or clone the upstream and `diff` against this repo:
 
 ```sh
 git clone https://github.com/Ar9av/obsidian-wiki /tmp/upstream
-diff -u /tmp/upstream/skills/llm-wiki/SKILL.md skills/llm-wiki/SKILL.md
+git -C /tmp/upstream checkout 6f20faa
+diff -u /tmp/upstream/.skills/llm-wiki/SKILL.md skills/llm-wiki/SKILL.md
 ```
 
 ---
@@ -64,11 +67,12 @@ goes beyond what Karpathy proposes.
 
 Eight skills from the upstream were dropped wholesale as overengineered
 or off-pattern (see the main README for the list). To restore any of
-them, copy the folder from upstream:
+them, copy the folder from upstream (note `.skills/` is hidden):
 
 ```sh
 git clone https://github.com/Ar9av/obsidian-wiki /tmp/upstream
-cp -r /tmp/upstream/skills/wiki-dashboard skills/
+git -C /tmp/upstream checkout 6f20faa
+cp -r /tmp/upstream/.skills/wiki-dashboard skills/
 ```
 
 ---
@@ -78,7 +82,8 @@ cp -r /tmp/upstream/skills/wiki-dashboard skills/
 If you find yourself wanting any of the trimmed machinery back after
 actually using the skills:
 
-1. Grab the section from upstream Ar9av/obsidian-wiki.
+1. Grab the section from upstream Ar9av/obsidian-wiki at commit
+   `6f20faa` (or whatever pinned commit you're tracking).
 2. Paste it back into the skill file.
 3. Update this log: move the entry from "cuts" to "restored" and note
    what changed your mind. The point is to learn what's genuinely

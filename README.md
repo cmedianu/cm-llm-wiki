@@ -74,8 +74,8 @@ this use:
 `wiki-dashboard`, `wiki-digest`, `wiki-export`, `graph-colorize`,
 `memory-bridge`, `wiki-agent`, `wiki-history-ingest`, `obsidian-wiki-ingest`.
 
-If you want any back, they still exist in the upstream:
-<https://github.com/Ar9av/obsidian-wiki/tree/main/skills>.
+If you want any back, they still exist in the upstream (pinned):
+<https://github.com/Ar9av/obsidian-wiki/tree/6f20faa/.skills>.
 
 ## Scripts
 
