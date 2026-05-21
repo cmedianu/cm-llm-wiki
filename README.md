@@ -9,6 +9,8 @@ multiple vaults can share one canonical copy.
 MIT licensed — see `LICENSE`. Original copyright (c) 2026 Ar9av;
 modifications (c) 2026 cmedianu.
 
+**New here?** Start with [`docs/getting-started.md`](docs/getting-started.md) — five-minute tour from clone to first wiki query.
+
 ## Layout
 
 ```
