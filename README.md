@@ -81,11 +81,6 @@ If you want any back, they still exist in the upstream (pinned):
 
 See `scripts/README.md`.
 
-## Status
-
-Skills are kept as-extracted in the initial commit. Trimming and rewriting
-for karpathy-fidelity is a separate task — issues / branches to follow.
-
 ## References
 
 - Andrej Karpathy, *LLM Wiki* — https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f
