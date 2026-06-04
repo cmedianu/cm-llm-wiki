@@ -14,11 +14,11 @@ You are preserving knowledge from the current conversation as a permanent wiki n
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand existing wiki content (avoid duplicates)
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it gives context on recent activity
 
-When writing internal links in Step 5, apply the link format from `wiki/SKILL.md` (Link Format section) using the `OBSIDIAN_LINK_FORMAT` value.
+When writing internal links in Step 5, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
 ## Step 1: Identify What's Worth Preserving
 

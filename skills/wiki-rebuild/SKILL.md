@@ -14,7 +14,7 @@ You are performing a destructive operation on the wiki. Always archive first, al
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides.
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `.manifest.json` to understand current state
 3. **Confirm the user's intent.** This skill supports three modes:
    - **Archive only** — snapshot current wiki, no rebuild
@@ -93,7 +93,7 @@ Same as Mode 1 above, but with reason `"rebuild"`.
 Remove all content from the category directories (`concepts/`, `entities/`, `skills/`, etc.) and the `projects/` directory. Keep:
 - `_archives/` (obviously)
 - `.obsidian/` (Obsidian config)
-- `.env` (if present in vault)
+- `.claude/` (skills, scripts, conventions symlinks)
 
 Reset `index.md` to the empty template. Reset `log.md` with just the rebuild entry. Delete `.manifest.json` (it'll be recreated during ingest).
 

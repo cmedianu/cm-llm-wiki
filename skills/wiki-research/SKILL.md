@@ -13,12 +13,12 @@ You are running an autonomous research loop on a topic, synthesizing what you fi
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand what's already in the wiki — don't re-research things the wiki covers well
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it surfaces recent context
 4. Check `$OBSIDIAN_VAULT_PATH/references/research-config.md` if it exists — it may define source preferences, domains to skip, or confidence rules for this vault
 
-When writing internal links in generated pages, apply the link format from `wiki/SKILL.md` (Link Format section) using the `OBSIDIAN_LINK_FORMAT` value.
+When writing internal links in generated pages, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
 Confirm the research topic with the user if it's ambiguous. Then proceed.
 

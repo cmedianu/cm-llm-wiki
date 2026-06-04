@@ -27,8 +27,8 @@ import pathlib
 
 def find_vault() -> pathlib.Path:
     """Resolve the active vault by walking up from CWD looking for .manifest.json
-    (the canonical vault marker). Falls back to OBSIDIAN_VAULT_PATH env var or
-    .env override for backward compatibility, but a default vault needs neither."""
+    (the canonical vault marker). Falls back to the OBSIDIAN_VAULT_PATH env var
+    for backward compatibility, but a default vault needs neither."""
     cwd = pathlib.Path.cwd()
     for d in [cwd] + list(cwd.parents):
         if (d / ".manifest.json").is_file():
@@ -38,14 +38,6 @@ def find_vault() -> pathlib.Path:
     env = os.environ.get("OBSIDIAN_VAULT_PATH")
     if env:
         return pathlib.Path(env)
-    for d in [cwd] + list(cwd.parents):
-        f = d / ".env"
-        if f.exists():
-            for line in f.read_text(encoding="utf-8").splitlines():
-                if line.startswith("OBSIDIAN_VAULT_PATH="):
-                    return pathlib.Path(line.split("=", 1)[1].strip().strip('"').strip("'"))
-        if d == pathlib.Path.home():
-            break
     raise SystemExit("No vault found: walked up from CWD without finding .manifest.json")
 
 

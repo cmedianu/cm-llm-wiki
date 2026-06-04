@@ -18,11 +18,11 @@ You are weaving the wiki's knowledge graph tighter by finding and inserting miss
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `index.md` to get the full inventory of pages and their one-line descriptions
 3. Skim `log.md` to see what was recently ingested (focus linking effort on new pages)
 
-When inserting links in Step 4, apply the link format from `wiki/SKILL.md` (Link Format section) using the `OBSIDIAN_LINK_FORMAT` value. When `OBSIDIAN_LINK_FORMAT=markdown`, compute the relative `.md` path from the **file being edited** to the target page.
+When inserting links in Step 4, write them as vault-relative wikilinks (see Link Format in `wiki/SKILL.md`).
 
 ## Step 1: Build the Page Registry
 

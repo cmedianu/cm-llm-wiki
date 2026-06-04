@@ -208,20 +208,17 @@ This is how the framework scales to large vaults without a database. Skills cons
 
 ## Link Format
 
-Controlled by `OBSIDIAN_LINK_FORMAT` from the resolved config (default: `wikilink`).
+The wiki uses Obsidian **wikilinks** with full vault-relative paths:
 
-| Setting | Syntax | Example |
-|---|---|---|
-| `wikilink` *(default)* | `[[path/to/page]]` or `[[path/to/page\|display]]` | `[[concepts/foo]]` |
-| `markdown` | `[display](relative/path.md)` | `[foo](../concepts/foo.md)` |
+| Syntax | Example |
+|---|---|
+| `[[path/to/page]]` or `[[path/to/page\|display]]` | `[[concepts/foo]]` |
 
-For markdown mode: compute the path from the current file's directory to the target `.md` file using `..` to climb up; always include the `.md` extension. The `[[path|display]]` wikilink form maps to `[display](relative/path.md)` in markdown mode.
-
-The setting affects only newly written or updated links — existing content is never auto-migrated. Run `wiki-link` or `wiki-lint` to convert old links if needed.
+Always use vault-relative paths, not bare basenames — some basenames aren't globally unique. Run `wiki-link` or `wiki-lint` to find and fix broken or missing links.
 
 ## Config Resolution Protocol
 
-The vault is self-describing — **no `.env` file is needed** for a default setup. The vault is the directory containing `.manifest.json`; everything else has a sensible default derived from that location.
+The vault is self-describing — **no config file or per-vault settings are needed**. The vault is the directory containing `.manifest.json`; every other path derives from that location.
 
 ### Vault discovery
 
@@ -241,21 +238,19 @@ find_vault() {
 }
 ```
 
-### Defaults derived from the vault location
+### Paths derived from the vault location
 
-| Setting | Default | Override |
-|---|---|---|
-| Vault root | directory containing `.manifest.json` | n/a — it's the marker |
-| Sources dir | `<vault>/_sources` | `.env` (rare) |
-| Archives dir | `<vault>/_archives` | `.env` (rare) |
-| Link format | `wikilink` | `.env` |
-| Claude history | `$HOME/.claude/projects` if it exists | `.env` |
+Everything derives from the vault root — there is no config file:
 
-Skills MUST infer defaults from the vault location and only read `.env` to apply overrides. A vault with no `.env` is the expected case.
+| Setting | Value |
+|---|---|
+| Vault root | directory containing `.manifest.json` |
+| Sources dir | `$OBSIDIAN_VAULT_PATH/_sources` |
+| Archives dir | `$OBSIDIAN_VAULT_PATH/_archives` |
+| Link format | wikilinks (vault-relative) |
+| Claude history | `$HOME/.claude/projects` if it exists |
 
-### `.env` is optional (and discouraged)
-
-A `.env` file at the vault root is supported for overriding any of the defaults above, but should be **absent** when defaults suffice. Keeping `.env` empty/absent is what makes the vault relocatable: `cp -r <vault> /elsewhere && cd /elsewhere` must work without edits. Hard-coded absolute paths in `.env` break that guarantee.
+Skills MUST infer every path from the vault location. A vault with no config of any kind is the only supported case — that's what keeps it relocatable (`cp -r <vault> /elsewhere && cd /elsewhere` must work with zero edits).
 
 ### Vault-scoped state
 
@@ -272,7 +267,7 @@ The vault path is the input to the hash — copying the vault elsewhere produces
 
 Every skill's setup section should read:
 
-> **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only to apply overrides.
+> **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 
 ## Relocatability Invariant
 
@@ -283,23 +278,16 @@ The vault is the unit of relocation. A vault must satisfy this invariant:
 This rules out:
 
 - Absolute paths inside the vault pointing back to itself
-- `.env` files that hard-code the vault location
 - Manifest entries keyed by absolute paths (relative paths only)
 - Symlinks pointing to absolute paths inside the vault
 
 The skills follow this. If you find a script that violates it, that's a bug.
 
-## Environment Variables (all optional)
+## Configuration
 
-A vault works with zero environment configuration. Set these in `<vault>/.env` only when you need to override a default:
+There is none, by design. A vault works with **zero configuration** — no config file, no per-vault settings. The vault is the directory containing `.manifest.json`, and every path derives from it (see the Config Resolution Protocol above). Skills refer to the resolved vault root as `$OBSIDIAN_VAULT_PATH` in their examples; that's just the variable they set from `find_vault`, not a value read from the environment.
 
-- `OBSIDIAN_SOURCES_DIR` — Override the `_sources/` default
-- `OBSIDIAN_LINK_FORMAT` — `wikilink` (default) or `markdown`
-- `CLAUDE_HISTORY_PATH` — Override the `$HOME/.claude/projects` default (for `wiki-claude-history`)
-
-`OBSIDIAN_VAULT_PATH` is **deprecated** — the vault is the directory containing `.manifest.json`, not whatever an env var claims. Skills that still read it will treat it as a deprecation warning.
-
-Categories are not declared in config; they are discovered from disk (any top-level dir not prefixed with `_` or `.`).
+Categories are not declared anywhere; they are discovered from disk (any top-level dir not prefixed with `_` or `.`).
 
 No API keys needed — the agent running these skills already has LLM access built in.
 
@@ -337,5 +325,4 @@ Maintenance scripts (`../../scripts/`):
 
 - `regen-manifest.py` — rebuild `.manifest.json` from filesystem
 - `kebab-rename.py` — mass kebab-case rename + wikilink rewrite
-
-What was trimmed from this skill (and how to restore): see `../../docs/trimming-log.md`.
+- `validate-frontmatter.py` — verify every page's YAML frontmatter parses

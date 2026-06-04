@@ -15,10 +15,9 @@ You are answering questions against a compiled Obsidian wiki, not raw source doc
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides.
-2. **Load QMD settings from the resolved config** before deciding retrieval strategy. If `QMD_WIKI_COLLECTION` is set, treat QMD as available subject only to transport/tool checks below. If it is empty or unset, say briefly why QMD is being skipped before using grep/page reads.
-3. If `$OBSIDIAN_VAULT_PATH/hot.md` exists, read it first — it gives you instant context on recent activity. If the user's question is about something ingested recently, hot.md may answer it before you even open `index.md`.
-4. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand the wiki's scope and structure
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+2. If `$OBSIDIAN_VAULT_PATH/hot.md` exists, read it first — it gives you instant context on recent activity. If the user's question is about something ingested recently, hot.md may answer it before you even open `index.md`.
+3. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand the wiki's scope and structure
 
 ## Visibility Filter (optional)
 
@@ -65,63 +64,7 @@ Build a candidate set *without opening any page bodies*:
 
 If you're in **index-only mode**, stop here. Answer from `summary:` fields, titles, and `index.md` descriptions only. Label the answer clearly: **"(index-only answer — page bodies not read; facts below are from page summaries and may miss nuance)"**. Then skip to Step 5.
 
-### Step 2b: QMD Semantic Pass (optional — requires `QMD_WIKI_COLLECTION` in resolved config)
-
-**GUARD: If `$QMD_WIKI_COLLECTION` is empty or unset after config resolution, skip this entire step and proceed to Step 3. Mention the missing variable in your working update.**
-
-> **No QMD?** Skip to Step 3 and use `Grep` directly on the vault. QMD is faster and concept-aware but the grep path is fully functional. See `.env.example` for setup.
-
-If `QMD_WIKI_COLLECTION` is set, run QMD before reaching for `Grep` unless the question is already fully answered by `hot.md` or `index.md` metadata. QMD is especially preferred when the question is semantic, project-specific, asks for related context, or uses terms that may not appear verbatim in titles/frontmatter.
-
-Choose the QMD transport from `$QMD_TRANSPORT`:
-
-- `mcp` (default): use the QMD MCP tool configured in the agent.
-- `cli`: run the local qmd CLI. Use `$QMD_CLI` if set; otherwise use `qmd`.
-
-For detailed CLI command selection, maintenance, and VM caveats, use the local
-`$qmd-cli` skill when it is installed.
-
-If the selected transport is unavailable (no MCP tool, `qmd` not on PATH, or the command errors), skip QMD and continue with Step 3.
-
-For MCP transport:
-
-```
-mcp__qmd__query:
-  collection: <QMD_WIKI_COLLECTION>   # e.g. "knowledge-base-wiki"
-  intent: <the user's question>
-  searches:
-    - type: lex    # keyword match — good for exact names, file paths, error messages
-      query: <key terms>
-    - type: vec    # semantic match — good for concepts, patterns, "what is X like"
-      query: <question rephrased as a description>
-```
-
-For CLI transport, pick the command from `$QMD_CLI_SEARCH_MODE`:
-
-Keep operator-like or punctuation-heavy tokens such as `no-sudo`, `ansible_become=false`, and `~/.local/bin` in the `lex:` line. Rewrite the `vec:` line as plain natural language without hyphenated `-term` words; QMD treats `-term` as negation, and negation is not supported in `vec`/`hyde` queries.
-
-- `quality` (default): best relevance; slower on CPU.
-  ```bash
-  ${QMD_CLI:-qmd} query $'lex: <key terms>\nvec: <question rephrased as a description>' -c "$QMD_WIKI_COLLECTION" -n 8 --files
-  ```
-- `balanced`: hybrid search without LLM reranking; use when `quality` is too slow.
-  ```bash
-  ${QMD_CLI:-qmd} query $'lex: <key terms>\nvec: <question rephrased as a description>' -c "$QMD_WIKI_COLLECTION" -n 8 --no-rerank --files
-  ```
-- `fast`: semantic-only recall, or `search` instead when exact names, file paths, or error messages matter.
-  ```bash
-  ${QMD_CLI:-qmd} vsearch "<question rephrased as a description>" -c "$QMD_WIKI_COLLECTION" -n 8 --files
-  ```
-
-Use `${QMD_CLI:-qmd} get "#docid"` to retrieve a ranked document by docid when CLI output provides one.
-
-The returned snippets or ranked files act as pre-read section summaries. If they answer the question fully, skip Step 3 and go straight to Step 4 (reading only the pages QMD ranked highest). If not, use the ranked file list to guide which files to grep or read in Step 3.
-
-**Also search `papers` when the question may have source material in `_raw/`:**
-
-If `QMD_PAPERS_COLLECTION` is set and the user is asking about a topic likely covered by ingested papers (research, theory, background), run a parallel search against the papers collection. Cite raw sources separately from compiled wiki pages in your answer.
-
-### Step 3: Section Pass (medium cost — only if Steps 2/2b are inconclusive)
+### Step 3: Section Pass (medium cost — only if Step 2 is inconclusive)
 
 For each of the top candidates, pull the relevant section *without reading the whole page*:
 

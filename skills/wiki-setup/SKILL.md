@@ -5,7 +5,7 @@ description: >
   Use this skill when the user wants to set up a new wiki from scratch, initialize the vault structure,
   or says things like "set up my wiki", "initialize obsidian", "create a new vault",
   "get started with the wiki". Also use when the user needs to reconfigure their existing vault or
-  fix a broken setup. A default vault needs no .env — paths are derived from the vault location.
+  fix a broken setup. A vault needs no config file — paths are derived from the vault location.
 ---
 
 # Obsidian Setup — Vault Initialization
@@ -16,11 +16,7 @@ You are setting up a new Obsidian wiki vault (or repairing an existing one).
 
 Ask the user where the vault should live (e.g. `~/Documents/obsidian-wiki-vault`). The vault is self-describing: its directory contains `.manifest.json`, and every other path the skills need is derived from there by default (`<vault>/_sources/` for raw inputs, `<vault>/_archives/` for snapshots, `$HOME/.claude/projects` for Claude history).
 
-**No `.env` file is created at setup.** Skills work without one. Only create `<vault>/.env` later if the user wants to override a default — e.g. sources living outside the vault, or Claude history at a non-standard path. Even then, never put `OBSIDIAN_VAULT_PATH` in it: the vault is defined by where `.manifest.json` lives, not by an absolute path baked into a config file.
-
-Optional integrations the user may also want (still no `.env` required unless overriding):
-
-- **QMD semantic search.** Enables semantic search in `wiki-query` and source discovery in `wiki-ingest`. Defaults to `QMD_TRANSPORT=mcp`; CLI mode uses `QMD_CLI_SEARCH_MODE=quality`. If unsure, skip — both skills fall back to `Grep` automatically.
+**No config file is created at setup — and none is needed.** The vault is defined by where `.manifest.json` lives, and skills derive every path from that. There is nothing to configure.
 
 ## Step 2: Create Vault Directory Structure
 

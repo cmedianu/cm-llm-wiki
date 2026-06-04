@@ -15,7 +15,7 @@ You are performing a health check on an Obsidian wiki. Your goal is to find and 
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides.
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `index.md` for the full page inventory
 3. Read `log.md` for recent activity context
 

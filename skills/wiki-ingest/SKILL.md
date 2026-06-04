@@ -15,12 +15,12 @@ You are ingesting source documents into an Obsidian wiki. Your job is not to sum
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root by default; read `<vault>/.env` only for overrides (`OBSIDIAN_SOURCES_DIR`, `OBSIDIAN_LINK_FORMAT`, `CLAUDE_HISTORY_PATH`).
+1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `.manifest.json` at the vault root to check what's already been ingested
 3. Read `index.md` to understand current wiki content
 4. Read `log.md` to understand recent activity
 
-When writing internal links in Step 5, apply the link format described in `wiki/SKILL.md` (Link Format section) according to the `OBSIDIAN_LINK_FORMAT` value you read.
+When writing internal links in Step 5, apply the link format described in `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
 ## Content Trust Boundary
 
@@ -61,7 +61,7 @@ Process draft pages from the `_raw/` staging directory inside the vault. Use whe
 - The user says "process my drafts", "promote my raw pages", or drops files into `_raw/`
 - After a paste-heavy session where notes were captured quickly without structure
 
-In raw mode, each file in `OBSIDIAN_VAULT_PATH/_raw/` (or `OBSIDIAN_RAW_DIR`) is treated as a source. After promoting a file to a proper wiki page, **delete the original from `_raw/`**. Never leave promoted files in `_raw/` — they'll be double-processed on the next run.
+In raw mode, each file in `$OBSIDIAN_VAULT_PATH/_raw/` is treated as a source. After promoting a file to a proper wiki page, **delete the original from `_raw/`**. Never leave promoted files in `_raw/` — they'll be double-processed on the next run.
 
 **Deletion safety:** Only delete the specific file that was just promoted. Before deleting, verify the resolved path is inside `$OBSIDIAN_VAULT_PATH/_raw/` — never delete files outside this directory. Never use wildcards or recursive deletion (`rm -rf`, `rm *`). Delete one file at a time by its exact path.
 
@@ -90,64 +90,6 @@ When the source is an image, your extraction job is interpretive — you're read
 Vision is interpretive by nature, so image-derived pages will skew heavily toward `^[inferred]`. That's expected — the provenance markers exist precisely to surface this. Don't pretend an image's "meaning" was extracted when you really inferred it.
 
 For PDFs that are mostly images (scanned docs, slide decks exported to PDF), use `Read pages: "N"` to pull specific pages and treat each page as an image source.
-
-### Step 1b: QMD Source Discovery (optional — requires `QMD_PAPERS_COLLECTION` in `.env`)
-
-**GUARD: If `$QMD_PAPERS_COLLECTION` is empty or unset, skip this entire step and proceed to Step 2.**
-
-> **No QMD?** Skip this step entirely. Use `Grep` in Step 4 to check for existing pages on the same topic before creating new ones. See `.env.example` for QMD setup instructions.
-
-When `QMD_PAPERS_COLLECTION` is set:
-
-Before extracting knowledge from a document, check whether related papers are already indexed that could enrich the page you're about to write:
-
-Choose the QMD transport from `$QMD_TRANSPORT`:
-
-- `mcp` (default): use the QMD MCP tool configured in the agent.
-- `cli`: run the local qmd CLI. Use `$QMD_CLI` if set; otherwise use `qmd`.
-
-If the selected transport is unavailable (no MCP tool, `qmd` not on PATH, or the command errors), skip QMD and continue with Step 2.
-
-For MCP transport:
-
-```
-mcp__qmd__query:
-  collection: <QMD_PAPERS_COLLECTION>   # e.g. "papers"
-  intent: <what this document is about>
-  searches:
-    - type: vec    # semantic — finds papers on the same topic even with different vocabulary
-      query: <topic or thesis of the source being ingested>
-    - type: lex    # keyword — finds papers citing the same methods, tools, or authors
-      query: <key terms, author names, method names from the source>
-```
-
-For CLI transport, pick the command from `$QMD_CLI_SEARCH_MODE`:
-
-- `quality` (default): best relevance; slower on CPU.
-  ```bash
-  ${QMD_CLI:-qmd} query $'vec: <topic or thesis of the source>\nlex: <key terms, author names, method names>' -c "$QMD_PAPERS_COLLECTION" -n 8 --files
-  ```
-- `balanced`: hybrid search without LLM reranking; use when `quality` is too slow.
-  ```bash
-  ${QMD_CLI:-qmd} query $'vec: <topic or thesis of the source>\nlex: <key terms, author names, method names>' -c "$QMD_PAPERS_COLLECTION" -n 8 --no-rerank --files
-  ```
-- `fast`: semantic-only source discovery.
-  ```bash
-  ${QMD_CLI:-qmd} vsearch "<topic or thesis of the source>" -c "$QMD_PAPERS_COLLECTION" -n 8 --files
-  ```
-
-Use `${QMD_CLI:-qmd} get "#docid"` to retrieve a ranked source by docid when CLI output provides one.
-
-Use the returned snippets to:
-1. **Surface related papers** you may not have thought to link — add them as cross-references in the wiki page
-2. **Identify recurring themes** across the corpus — these deserve their own concept pages
-3. **Find contradictions** between this source and indexed papers — flag with `^[ambiguous]`
-4. **Avoid duplicate pages** — if the corpus already covers this concept heavily, merge rather than create
-
-If the QMD results show that 3+ papers touch the same concept, that concept almost certainly warrants a global `concepts/` page.
-
-**Skip this step** if `QMD_PAPERS_COLLECTION` is not set.
-
 
 ### Step 2: Extract Knowledge
 
