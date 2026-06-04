@@ -124,17 +124,6 @@ Adjuncts:
 - `wiki-research` — multi-round web research + auto-file results
 - `wiki-synthesize` — discover cross-page synthesis opportunities
 
-## Dropped early on (historical)
-
-Back when this still tracked its origin repo, these skills were dropped as
-overengineered or off-pattern for this use:
-
-`wiki-dashboard`, `wiki-digest`, `wiki-export`, `graph-colorize`,
-`memory-bridge`, `wiki-agent`, `wiki-history-ingest`, `obsidian-wiki-ingest`.
-
-They still exist in that now-unrelated origin repo (pinned), if you ever want to look:
-<https://github.com/Ar9av/obsidian-wiki/tree/6f20faa/.skills>.
-
 ## Scripts
 
 See `scripts/README.md`.
