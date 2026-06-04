@@ -32,3 +32,9 @@ that vault's own `CLAUDE.md`, not here.
 - **Categories mirror the vault's existing top-level folders**, not the llm-wiki default
   taxonomy (concepts/entities/skills). Match the folder a topic already lives in.
 - **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages.
+- **No hardcoded inventory counts.** Don't write fixed tallies of pages, skills, scripts,
+  sources, etc. into prose ("Catalog of all 65 pages", "the 12 skills", "28 abstracts") —
+  they go stale the moment anything is added or removed, and nothing keeps them honest.
+  Describe the collection ("Catalog of the vault's pages") instead of counting it. If a
+  count is genuinely needed, compute it at read time rather than freezing it in text. This
+  applies to any quantity that drifts, not just page counts.

@@ -103,6 +103,30 @@ Verify `index.md` matches the actual page inventory.
 **How to check:**
 - Compare pages listed in `index.md` to actual files on disk
 - Check that summaries in `index.md` still match page content
+- **Category headings mirror folders:** every `##` heading in `index.md` must match an
+  actual top-level folder name (or be a clearly-marked root/meta section). Flag headings
+  that don't map to a folder (e.g. `## GIT` when the folder is `git-management`, `## Recipes`
+  when it's `cooking`, or ad-hoc machine/host names) and entries filed under the wrong folder.
+- **Wikilinks are full vault-relative paths:** flag bare-basename links in `index.md` for any
+  page that does not live at the vault root (e.g. `[[scryb-specification]]` when the file is
+  `my-apps/scryb/scryb-specification.md`).
+
+### 6a. Hardcoded Inventory Counts
+
+Per the shared conventions ("No hardcoded inventory counts"), frozen tallies go stale silently.
+
+**How to check:**
+- Grep `index.md`, `log.md`, `README`/landing pages, and page bodies for fixed counts of
+  collections that drift: `\b\d+\s+(pages|skills|scripts|sources|abstracts|notes|entries|files|servers|recipes)\b`
+  and phrasings like "all N", "the N ", "N+ ".
+- Flag each as a staleness risk. **Exempt** counts that are intrinsic to fixed content
+  (e.g. "the 3-criteria rubric", "RFC 6962", version numbers, dates, quantities inside a
+  quoted source) — only flag tallies of a *maintained collection* that grows or shrinks.
+- Verify any surviving count against the real number on disk; report the drift if it's wrong.
+
+**How to fix:**
+- Rewrite to describe the collection instead of counting it ("Catalog of the vault's pages").
+- If a count is genuinely needed, note that it should be computed at read time, not frozen.
 
 ### 7. Provenance Drift
 
@@ -283,6 +307,12 @@ Report findings as a structured list:
 
 ### Index Issues (N found)
 - `concepts/new-page.md` exists on disk but not in index.md
+- `index.md` — heading `## GIT` does not mirror a folder (page lives in `git-management/`)
+- `index.md` — bare-basename link `[[scryb-specification]]` should be `[[my-apps/scryb/scryb-specification]]`
+
+### Hardcoded Inventory Counts (N found)
+- `index.md:3` — "Catalog of all 65 pages" (stale tally — describe, don't count)
+- `science-fair/.../README.md` — "28 sourced abstracts" (recompute or rephrase)
 
 ### Missing Summary (N found — soft)
 - `concepts/foo.md` — no `summary:` field
@@ -323,7 +353,7 @@ Concept pairs that co-occur frequently but have no synthesis page:
 
 Append to `log.md`:
 ```
-- [TIMESTAMP] LINT issues_found=N orphans=X broken_links=Y stale=Z contradictions=W prov_issues=P missing_summary=S fragmented_clusters=F visibility_issues=V promotion_candidates=C synthesis_gaps=G
+- [TIMESTAMP] LINT issues_found=N orphans=X broken_links=Y stale=Z contradictions=W prov_issues=P missing_summary=S fragmented_clusters=F visibility_issues=V promotion_candidates=C synthesis_gaps=G hardcoded_counts=H
 ```
 
 Offer to fix issues automatically or let the user decide which to address.
