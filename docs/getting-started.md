@@ -4,8 +4,8 @@ Five-minute tour. Clone, wire one vault, run your first three commands.
 
 ## What you get
 
-- 14 Claude Code skills implementing Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) for Obsidian — distill raw sources into a compounding wiki, query it, keep it tidy.
-- 2 Python utilities (stdlib only) for gaps the skills don't cover: rebuild manifest, mass kebab-case rename.
+- Claude Code skills implementing Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) for Obsidian — distill raw sources into a compounding wiki, query it, keep it tidy.
+- Python utilities for gaps the skills don't cover: rebuild manifest, mass kebab-case rename, and validate frontmatter. Most are stdlib-only; the validator is a `uv` script (auto-installs `pyyaml`).
 
 ## Prerequisites
 
@@ -19,23 +19,13 @@ Five-minute tour. Clone, wire one vault, run your first three commands.
 # 1. Clone this repo somewhere outside the vault.
 git clone https://github.com/cmedianu/cm-llm-wiki /path/to/cm-llm-wiki
 
-# 2. Symlink skills + scripts into the vault's .claude/.
-REPO=/path/to/cm-llm-wiki
-VAULT=/path/to/your/vault
-mkdir -p "$VAULT/.claude"
-ln -s "$REPO/skills"  "$VAULT/.claude/skills"
-ln -s "$REPO/scripts" "$VAULT/.claude/wiki-scripts"
-
-# 3. Tell the skills where the vault lives.
-cat > "$VAULT/.env" <<EOF
-OBSIDIAN_VAULT_PATH=$VAULT
-OBSIDIAN_SOURCES_DIR=$VAULT
-OBSIDIAN_CATEGORIES=AI,Notes,Projects
-OBSIDIAN_LINK_FORMAT=wikilink
-EOF
+# 2. Wire your vault to it (idempotent — also repairs links later).
+/path/to/cm-llm-wiki/wire-vault.sh /path/to/your/vault
 ```
 
-Skills resolve config by walking up from your shell's CWD until they find a `.env` with `OBSIDIAN_VAULT_PATH`. So `cd $VAULT && claude` puts you in that vault's context — no global flag.
+That creates the three `.claude` symlinks (`skills`, `wiki-scripts`, `wiki-conventions.md`) and seeds a `CLAUDE.md` that imports the shared conventions. Open it and fill in the "This vault's specifics" section (folder taxonomy, private areas, special namespaces).
+
+The vault is the directory containing `.manifest.json`; skills find the active vault by walking up from your shell's CWD for it, so `cd /path/to/your/vault && claude` puts you in that vault's context — no global flag. If the vault has no `.manifest.json` yet, create it with `wiki-setup` (see below).
 
 ## First three commands
 
@@ -61,7 +51,7 @@ If the vault already has notes but no `.manifest.json` → run `scripts/regen-ma
 
 > ingest this folder: ~/Documents/research-papers
 
-Triggers `wiki-ingest`. Reads each source, distills it into wiki pages, updates `index.md`, appends to `log.md`, updates `.manifest.json`. New pages land under the categories you set in `.env`.
+Triggers `wiki-ingest`. Reads each source, distills it into wiki pages, updates `index.md`, appends to `log.md`, updates `.manifest.json`. New pages land under your vault's category folders (the top-level folders are the taxonomy).
 
 ### 3. Ask the wiki
 
@@ -80,10 +70,10 @@ For cheap lookups: phrase it as "quick answer: ..." and it'll read only `summary
 | Ask the wiki | "what do I know about X?" | `wiki-query` |
 | Run web research and file results | "research LLM evaluation" | `wiki-research` |
 | Audit and fix issues | "audit my wiki" | `wiki-lint` |
-| Add missing cross-links | "link my pages" | `cross-linker` |
+| Add missing cross-links | "link my pages" | `wiki-link` |
 | Push project work to the wiki | "save this project to the wiki" | `wiki-update` |
 | Find cross-cutting connections | "synthesize my wiki" | `wiki-synthesize` |
-| Mine your Claude session history | "process my Claude history" | `claude-history-ingest` |
+| Mine your Claude session history | "process my Claude history" | `wiki-claude-history` |
 | Start fresh | "rebuild the wiki" | `wiki-rebuild` |
 | Switch between vaults | "/wiki-switch work" | `wiki-switch` |
 
@@ -93,12 +83,12 @@ Every skill's `description:` field (top of each `SKILL.md`) lists the exact phra
 
 Wire each vault the same way (steps 1–3). Two ways to switch:
 
-- **Just `cd`.** The walked-up `.env` makes whichever vault you're inside the active one. This is the simplest pattern.
+- **Just `cd`.** Walking up from CWD to the nearest `.manifest.json` makes whichever vault you're inside the active one. This is the simplest pattern.
 - **`/wiki-switch NAME`.** Manages named profiles at `~/.obsidian-wiki/config.NAME`. Useful if you want to operate on vault A while sitting in vault B's directory.
 
 ## Read the keystone
 
-[`skills/llm-wiki/SKILL.md`](../skills/llm-wiki/SKILL.md) is the theory doc — three-layer architecture, page template, provenance markers, retrieval primitives. Every other skill defers to it. ~260 lines, ~5 min read. Read it once before going deep.
+[`skills/wiki/SKILL.md`](../skills/wiki/SKILL.md) is the theory doc — three-layer architecture, page template, provenance markers, retrieval primitives. Every other skill defers to it. ~260 lines, ~5 min read. Read it once before going deep.
 
 ## Common gotchas
 
@@ -108,6 +98,8 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 **WSL + Windows + OneDrive.** Symlinks work fine on the WSL side (where Claude Code runs). Windows tooling may not follow them — but nothing on the Windows side reads `.claude/`, so it's fine in practice. Obsidian itself ignores `.claude/`.
 
-**No `.env`?** Skills refuse to run and tell you to run `wiki-setup`. Make sure your `.env` has `OBSIDIAN_VAULT_PATH` and is in the vault root.
+**No `.manifest.json`?** Skills can't locate the vault and tell you to run `wiki-setup`. That file is the canonical vault marker — `wiki-setup` creates it on a fresh vault, or `scripts/regen-manifest.py` bootstraps one on a vault that already has notes.
 
-**Trimmed compared to upstream.** This repo intentionally drops 8 skills and trims `llm-wiki/SKILL.md` from 447 to ~260 lines. See [`trimming-log.md`](trimming-log.md) if you want any of it back.
+**Moved the vault, or `.claude` links broke?** Re-run `wire-vault.sh <vault>` from the repo to repair the symlinks (`--check` first if you just want a diagnosis). The vault content travels fine on its own; only the links back into this repo need re-pointing.
+
+**Diverged from its origin.** This project began as a fork of Ar9av/obsidian-wiki but has changed so much — skills rewritten, renamed, and dropped; the config model replaced — that the relationship is now purely historical.
