@@ -36,11 +36,20 @@ One command from the repo:
 ./wire-vault.sh /path/to/your/vault
 ```
 
+On **native Windows** (PowerShell, no WSL) use the `.ps1` port — same flags, same output:
+
+```powershell
+.\wire-vault.ps1 C:\path\to\your\vault          # -Check to diagnose without changing anything
+```
+
 `wire-vault.sh` is idempotent: it creates the three `.claude` symlinks (`skills`,
 `wiki-scripts`, `wiki-conventions.md`) and seeds a `CLAUDE.md` from the template
 **only if one isn't already there**. Re-run it any time to repair links — e.g.
 after moving the vault or cloning the repo to a new path. `./wire-vault.sh --check
 <vault>` reports the wiring state without changing anything (exit 0 = fully wired).
+`wire-vault.ps1` does the same on Windows, linking the two directories with
+junctions and `wiki-conventions.md` with a symlink (or a copy if Developer Mode is
+off) — see [`docs/getting-started.md`](docs/getting-started.md) for the details.
 
 By hand, it's just:
 
@@ -97,9 +106,9 @@ copy or share a vault:
   import in `CLAUDE.md`) only resolve where this repo exists at the linked path.
 
 So moving a vault to a **new machine** is two steps, not one: copy the vault, then clone
-this repo there and run `./wire-vault.sh <vault>` to re-point the links. The same command
-repairs a vault whose links broke for any reason; `./wire-vault.sh --check <vault>` tells
-you whether you need to. The mental model: **vault = data (portable), repo = tooling
+this repo there and run `./wire-vault.sh <vault>` (or `wire-vault.ps1 <vault>` on Windows)
+to re-point the links. The same command repairs a vault whose links broke for any reason;
+`./wire-vault.sh --check <vault>` (`-Check` on Windows) tells you whether you need to. The mental model: **vault = data (portable), repo = tooling
 (clone-and-link)**.
 
 ## Skills

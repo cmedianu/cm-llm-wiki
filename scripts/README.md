@@ -4,6 +4,11 @@ Small Python utilities that fill gaps no skill covers. Most are stdlib-only;
 `validate-frontmatter.py` is a `uv` script that pulls in `pyyaml` on the fly
 (PEP 723 inline metadata — `uv run` handles it, no manual install).
 
+They run unchanged on native Windows — invoke with `python` or the `py` launcher
+(there is no `python3` on Windows), and set env knobs with `$env:VAR=1` (PowerShell)
+or `set VAR=1` (cmd) instead of the `VAR=1 cmd` inline form. Each block below shows
+both.
+
 ## When to use these vs the skills
 
 The skills in `../skills/` are the primary surface — ingest, query, lint,
@@ -36,6 +41,13 @@ cd /path/to/vault          # or set OBSIDIAN_VAULT_PATH
 python3 regen-manifest.py  # or: DRY_RUN=1 python3 regen-manifest.py
 ```
 
+```powershell
+# Windows / PowerShell
+cd C:\path\to\vault
+python regen-manifest.py                       # or: py regen-manifest.py
+$env:DRY_RUN=1; python regen-manifest.py; Remove-Item Env:DRY_RUN   # preview, then clear
+```
+
 Scans every content `.md` (skipping dotdirs and the `index.md` / `log.md`
 scaffolding). For each:
 
@@ -54,6 +66,14 @@ top-level `updated` timestamp.
 cd /path/to/vault
 DRY_RUN=1 python3 kebab-rename.py   # always preview first
 APPLY=1   python3 kebab-rename.py
+```
+
+```powershell
+# Windows / PowerShell — env vars persist for the session, so CLEAR them between
+# runs or a stale APPLY=1 will fire on your next invocation.
+cd C:\path\to\vault
+$env:DRY_RUN=1; python kebab-rename.py; Remove-Item Env:DRY_RUN   # always preview first
+$env:APPLY=1;   python kebab-rename.py; Remove-Item Env:APPLY
 ```
 
 Refuses to run without exactly one of `DRY_RUN=1` or `APPLY=1`.
@@ -89,6 +109,11 @@ intermediate. If you write a new rename script, replicate this pattern.
 
 ```sh
 uv run .claude/wiki-scripts/validate-frontmatter.py   # from anywhere in the vault
+```
+
+```powershell
+# Windows — same command (uv is cross-platform); the ./script.py shebang form is POSIX-only.
+uv run .claude\wiki-scripts\validate-frontmatter.py
 ```
 
 Walks every content `.md`, extracts the `---` … `---` block, and parses it with
