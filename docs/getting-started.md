@@ -5,16 +5,16 @@ Five-minute tour. Clone, wire one vault, run your first three commands.
 ## What you get
 
 - Claude Code skills implementing Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) for Obsidian — distill raw sources into a compounding wiki, query it, keep it tidy.
-- Python utilities for gaps the skills don't cover: rebuild manifest, mass kebab-case rename, and validate frontmatter. Most are stdlib-only; the validator is a `uv` script (auto-installs `pyyaml`).
+- Python utilities: `wiki-lint.py` and `wiki-graph.py` — the deterministic backends behind the `wiki-lint` and `wiki-status` insights skills — plus gap-fillers the skills don't cover (rebuild manifest, mass kebab-case rename, validate frontmatter). The three that parse YAML (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`) are `uv` scripts that auto-install `pyyaml`; `regen-manifest.py` and `kebab-rename.py` are stdlib-only.
 
 ## Prerequisites
 
-**For the skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work.
+**For most skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work. The exceptions are `wiki-lint` and `wiki-status` insights, which call the Python analysis scripts below; everything else (ingest, query, link, capture, synthesize, …) is pure Claude Code.
 
-**Only if you run the Python maintenance scripts** (rebuild manifest, mass rename, validate frontmatter):
+**If you run the Python scripts** (the `wiki-lint` / `wiki-status`-insights backends, plus rebuild-manifest / mass-rename / validate-frontmatter):
 
-- Python 3.8+ in `PATH` — invoked as `python3` on macOS/Linux, `python` or the `py` launcher on native Windows.
-- [`uv`](https://docs.astral.sh/uv/) (all platforms) — only `validate-frontmatter.py` needs it; the other scripts are stdlib-only.
+- Python in `PATH` — invoked as `python3` on macOS/Linux, `python` or the `py` launcher on native Windows. `regen-manifest.py` and `kebab-rename.py` run on any 3.x; `wiki-lint.py` and `wiki-graph.py` need **3.10+**.
+- [`uv`](https://docs.astral.sh/uv/) (all platforms) — the simplest way to run the YAML-parsing scripts (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`): `uv run` auto-installs `pyyaml`, nothing else to set up. Without `uv`, run them with `python3` after a one-time `pip install pyyaml`. `regen-manifest.py` and `kebab-rename.py` are stdlib-only and need neither.
 
 ## Wire one vault
 
@@ -106,6 +106,8 @@ For cheap lookups: phrase it as "quick answer: ..." and it'll read only `summary
 | Start fresh | "rebuild the wiki" | `wiki-rebuild` |
 | Switch between vaults | "/wiki-switch work" | `wiki-switch` |
 
+> **Heads-up:** `wiki-lint` ("audit my wiki") and `wiki-status` insights ("show me the hubs") run the Python analysis scripts (`wiki-lint.py` / `wiki-graph.py`), so they need `uv` (or `python3` + `pyyaml`) — see [Prerequisites](#prerequisites). Every other skill needs nothing but Claude Code.
+
 Every skill's `description:` field (top of each `SKILL.md`) lists the exact phrases that trigger it. If you forget what to say, browse those.
 
 ## Multi-vault
@@ -117,7 +119,7 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 ## Read the keystone
 
-[`skills/wiki/SKILL.md`](../skills/wiki/SKILL.md) is the theory doc — three-layer architecture, page template, provenance markers, retrieval primitives. Every other skill defers to it. ~260 lines, ~5 min read. Read it once before going deep.
+[`skills/wiki/SKILL.md`](../skills/wiki/SKILL.md) is the theory doc — three-layer architecture, page template, provenance markers, retrieval primitives. Every other skill defers to it. A ~5-minute read — go through it once before going deep.
 
 ## Common gotchas
 

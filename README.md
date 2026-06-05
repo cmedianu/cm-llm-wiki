@@ -20,7 +20,7 @@ code still resembles the original.
 
 ```
 skills/              Claude Code skills — the schema layer of the wiki pattern
-scripts/             Python maintenance scripts (kebab-rename, regen-manifest, validate-frontmatter)
+scripts/             Python maintenance + analysis scripts (wiki-lint, wiki-graph, kebab-rename, regen-manifest, validate-frontmatter)
 wiki-conventions.md  Shared CLAUDE.md conventions, @-imported by every vault
 ```
 

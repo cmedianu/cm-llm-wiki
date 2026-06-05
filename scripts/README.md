@@ -1,8 +1,14 @@
 # scripts
 
-Small Python utilities that fill gaps no skill covers. Most are stdlib-only;
-`validate-frontmatter.py` is a `uv` script that pulls in `pyyaml` on the fly
-(PEP 723 inline metadata — `uv run` handles it, no manual install).
+Python utilities for the wiki. Two of them — `wiki-lint.py` and `wiki-graph.py` —
+are the deterministic compute backends for the `wiki-lint` and `wiki-status`
+skills; the rest fill gaps no skill covers. The `uv` scripts (`wiki-lint.py`,
+`wiki-graph.py`, `validate-frontmatter.py`) pull in `pyyaml` on the fly via PEP 723
+inline metadata (`uv run` handles it, no manual install); `regen-manifest.py` and
+`kebab-rename.py` are stdlib-only. Prefer not to use `uv`? The three YAML scripts
+also run under a plain `python3` (3.10+ for `wiki-lint.py` / `wiki-graph.py`) once
+you `pip install pyyaml` — invoke them as `python3 wiki-lint.py …` instead of
+`uv run …`.
 
 They run unchanged on native Windows — invoke with `python` or the `py` launcher
 (there is no `python3` on Windows), and set env knobs with `$env:VAR=1` (PowerShell)
@@ -12,8 +18,15 @@ both.
 ## When to use these vs the skills
 
 The skills in `../skills/` are the primary surface — ingest, query, lint,
-rebuild, etc. These scripts cover **specific operations the skills do
-not implement**:
+rebuild, etc. Two scripts are the **deterministic backends** those skills call so
+the LLM doesn't recompute mechanical things by reading every page:
+
+| Script | Backs | Computes |
+|---|---|---|
+| `wiki-lint.py` | `wiki-lint` | orphans, broken links, missing/oversized frontmatter & summary, index drift, hardcoded counts, stale pages, lifecycle/supersession integrity, provenance marker ratios, misc-promotion candidates |
+| `wiki-graph.py` | `wiki-status` (insights) | wikilink graph: hubs, tag cohesion, orphans/orphan-adjacent, bridges (articulation points), cross-category edges, run-to-run delta |
+
+The rest cover **specific operations the skills do not implement**:
 
 | Script | Fills this gap |
 |---|---|
@@ -33,6 +46,47 @@ All scripts pick up the active vault automatically:
 That matches the Config Resolution Protocol the skills follow (see
 `skills/wiki/SKILL.md`). A default vault needs no env var or config file —
 `.manifest.json` is all it takes.
+
+## `wiki-lint.py`
+
+```sh
+uv run .claude/wiki-scripts/wiki-lint.py              # JSON report (default)
+uv run .claude/wiki-scripts/wiki-lint.py --format md  # human-readable report
+```
+
+```powershell
+uv run .claude\wiki-scripts\wiki-lint.py --format md
+```
+
+Runs every mechanical health check in one read-only pass and prints a report:
+orphans, broken wikilinks, missing/oversized frontmatter and summaries, index
+drift, hardcoded inventory counts, stale pages, lifecycle/supersession integrity,
+provenance marker ratios, and misc-promotion candidates. Exit `0` when there are
+no error-level findings, `1` when there are (broken links, missing required
+frontmatter, invalid lifecycle/supersession) — so it works as a pre-commit /
+pre-publish gate. The `wiki-lint` skill calls this, then adds the judgement-only
+checks it can't: contradictions, provenance interpretation, and visibility/PII.
+Read-only; never writes. Needs `pyyaml` via the PEP 723 header — nothing to install.
+
+## `wiki-graph.py`
+
+```sh
+uv run .claude/wiki-scripts/wiki-graph.py             # JSON (default)
+uv run .claude/wiki-scripts/wiki-graph.py --format md # readable summary
+```
+
+```powershell
+uv run .claude\wiki-scripts\wiki-graph.py --format md
+```
+
+Builds the wikilink graph once and reports hubs, tag cohesion, orphans /
+orphan-adjacent pages, bridges (real articulation points via iterative Tarjan
+DFS), cross-category edges, and the delta since the last run. It does not touch
+the vault — its one side effect is a graph snapshot under
+`~/.obsidian-wiki/state/<vault-id>/graph-snapshot.json` (outside the vault, keyed
+by a hash of the vault path, so copies stay relocatable and get a fresh snapshot),
+used to compute the next delta. The `wiki-status` insights mode renders this JSON
+into `_insights.md`. Needs `pyyaml`.
 
 ## `regen-manifest.py`
 
