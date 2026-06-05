@@ -9,12 +9,29 @@ Five-minute tour. Clone, wire one vault, run your first three commands.
 
 ## Prerequisites
 
-- [Claude Code](https://claude.com/claude-code) installed and authenticated.
-- An Obsidian vault (existing or empty directory). Anywhere on disk.
+**For the skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work.
+
+**Only if you run the Python maintenance scripts** (rebuild manifest, mass rename, validate frontmatter):
+
 - Python 3.8+ in `PATH` — invoked as `python3` on macOS/Linux, `python` or the `py` launcher on native Windows.
 - [`uv`](https://docs.astral.sh/uv/) (all platforms) — only `validate-frontmatter.py` needs it; the other scripts are stdlib-only.
 
 ## Wire one vault
+
+### Easiest: copy (non-technical, works on Windows + WSL)
+
+[Download the repo as a ZIP](https://github.com/cmedianu/cm-llm-wiki/archive/refs/heads/main.zip), unzip it, and inside your vault make a folder named `.claude`. Then:
+
+- Copy `skills` into `.claude` (so you have `.claude/skills`).
+- Copy `scripts` into `.claude` and rename it to `wiki-scripts`.
+- Copy `wiki-conventions.md` into `.claude`.
+- Create a `CLAUDE.md` at the vault root containing one line: `@.claude/wiki-conventions.md`.
+
+No symlinks, no terminal — and it works identically from Windows and WSL, including cloud-synced folders like OneDrive, Dropbox, or Google Drive. Trade-off: it's a **snapshot**. When the repo updates, re-copy the files to get the changes.
+
+### Stay in sync: link
+
+Linking instead of copying means repo updates reach the vault automatically:
 
 ```sh
 # 1. Clone this repo somewhere outside the vault.
@@ -32,6 +49,8 @@ git clone https://github.com/cmedianu/cm-llm-wiki C:\path\to\cm-llm-wiki
 ```
 
 The two directory links use **junctions** (no admin, no Developer Mode). The single `wiki-conventions.md` link uses a real **symlink** when it can, falling back to a **copy** if Developer Mode is off and the shell isn't elevated — re-run after [enabling Developer Mode](https://learn.microsoft.com/windows/apps/get-started/enable-your-device-for-development) for a live link.
+
+> **Don't link a cloud-synced vault.** If the vault lives under OneDrive/Dropbox/Google Drive, use the copy method above instead — cloud sync silently breaks junctions and symlinks. Details in [Common gotchas](#common-gotchas).
 
 That creates the three `.claude` links (`skills`, `wiki-scripts`, `wiki-conventions.md`) and seeds a `CLAUDE.md` that imports the shared conventions. Open it and fill in the "This vault's specifics" section (folder taxonomy, private areas, special namespaces).
 
@@ -108,7 +127,12 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 **Windows links.** Native Windows (`wire-vault.ps1`) links the two directories with **junctions**, which every Windows tool — Claude Code, Obsidian, Python — follows transparently. The single `wiki-conventions.md` is a real symlink where possible, else a **copy**; if it fell back to a copy, repo-side edits to `wiki-conventions.md` won't reach the vault until you re-run `wire-vault.ps1` (enable Developer Mode for a live link). Obsidian ignores `.claude/` either way.
 
-**WSL + Windows + OneDrive.** Under WSL, symlinks work fine on the WSL side (where Claude Code runs). Windows tooling may not follow WSL-created symlinks — but nothing on the Windows side reads `.claude/`, so it's fine in practice.
+**Cloud-synced vaults break links (OneDrive / Dropbox / Google Drive).** These sync engines don't understand reparse points. A junction or symlink placed inside a synced folder gets flattened to a 0-byte stub on the Windows side — Explorer shows it as a 0 KB *File* (not a folder), with a perpetual "syncing" icon, and Obsidian/Claude-on-Windows can't traverse it. Verified: `wire-vault.ps1` into a OneDrive vault yields 0 KB stubs, while the identical command into a non-synced path like `C:\TEMP\testVault` yields working `<JUNCTION>`s. Resolutions, in order of preference:
+
+1. **Use the copy method** ([top of this doc](#easiest-copy-non-technical-works-on-windows--wsl)) — real files sync cleanly and work from both Windows and WSL. You re-copy on repo updates; that's the only cost.
+2. **Move the vault to a local, non-synced path** (e.g. `C:\Vaults\…`) and link there — junctions/symlinks behave normally off the sync root.
+
+WSL is the exception: it resolves reparse points natively, so a `wire-vault.sh` setup used **only** from WSL works even when the vault sits under OneDrive — right up until a native-Windows tool needs `.claude/`, at which point the link reads as a broken 0 KB file. If your workflow is WSL-only, you can ignore this; if anything on the Windows side touches the vault, copy.
 
 **No `.manifest.json`?** Skills can't locate the vault and tell you to run `wiki-setup`. That file is the canonical vault marker — `wiki-setup` creates it on a fresh vault, or `scripts/regen-manifest.py` bootstraps one on a vault that already has notes.
 
