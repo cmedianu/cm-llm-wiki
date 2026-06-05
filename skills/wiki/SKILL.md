@@ -118,28 +118,7 @@ Use [[wikilinks]] to connect to related pages.
 
 ### URL sources
 
-`sources:` is a YAML list of strings. Each entry is either a vault-relative path or a full URL (leading `http://` / `https://` is the discriminator). Mix freely:
-
-```yaml
-sources:
-  - _sources/web/martinfowler-microservices-2014.md   # local snapshot
-  - https://martinfowler.com/articles/microservices.html   # original URL
-  - _sources/papers/attention-is-all-you-need.pdf   # file source
-  - https://example.com/see-also   # URL-only, no snapshot
-```
-
-**Recommended:** snapshot + URL (two entries) for any URL that is **evidence** for a non-trivial claim. Snapshot first (what `wiki-lint` verifies), URL second (what a reader clicks).
-
-**URL-only** (one entry) is acceptable only for ephemera — "see also" pointers whose removal would not weaken any claim on the page.
-
-Snapshot conventions:
-
-- Path: `_sources/web/<slug>.md`
-- Slug: kebab-case, derived from `<domain>-<title-or-slug>-<year>`, e.g. `martinfowler-microservices-2014.md`, `instructables-carbon-quantum-dots-2019.md`
-- Format: Markdown preferred (clean grep target). HTML alongside (`<slug>.html`) only when conversion loses important structure. PDFs unchanged.
-- Manifest entry keyed by the snapshot path, with `source_type: "url"`, `source_url:`, `fetched_at:`, `content_hash:`.
-
-`wiki-lint` flags URL-only `sources:` entries that 404 and downgrades dependent claims to `^[ambiguous]` until a snapshot is added.
+`sources:` entries are vault-relative paths or full URLs (`http(s)://` is the discriminator), mixed freely. For any URL that is **evidence** for a non-trivial claim, store a local snapshot under `_sources/web/<slug>.md` *and* the URL. See **`references/vault-mechanics.md` → URL Sources** for the snapshot conventions and manifest keys.
 
 ### Folder naming convention
 
@@ -149,19 +128,12 @@ Why: consistent with kebab-case filenames, URL-safe, no shift-key ambiguity, pla
 
 Exceptions that may keep TitleCase: none enforced, but if you prefer prettier sidebar display in Obsidian and only ever access the vault on Windows/macOS (case-insensitive), TitleCase top-level folders work too. Pick one style per vault — mixing is what breaks.
 
-**To rename a category:**
-
-1. Run `.claude/wiki-scripts/kebab-rename.py` (or a folder-only variant) — it renames the folder, rewrites every wikilink that referenced the old path, and re-keys the manifest in lockstep. Use `DRY_RUN=1` first.
-2. Update the section heading in `index.md`.
-3. Append a `RECATEGORIZE` entry to `log.md`.
-
-To **add** a category: `mkdir <name>` at the vault root. No config edit needed — skills discover it on next read. To **remove** a category: move its pages elsewhere first, then `rmdir`. To **hide a top-level directory from category discovery** (e.g. a scratch area you don't want ingest to write into), rename it with a `_` prefix.
+**To add** a category: `mkdir <name>` at the vault root — skills discover it on next read, no config edit needed. **To rename, remove, or hide** one (including the `kebab-rename.py` lockstep rename + wikilink-rewrite + manifest re-key), see **`references/vault-mechanics.md` → Renaming a Category**.
 
 Optional frontmatter fields (ingest skills may populate; hand-authored pages can omit):
 
 - `aliases:` — alternate names this page should also resolve as.
-- `lifecycle:` — `draft` / `reviewed` / `archived`. Default `reviewed` for human-authored. Only ingest skills set `draft`. Transitions are manual.
-- `base_confidence:` — `[0.0, 1.0]` quality estimate. Default `0.85` for human-authored. Ingest skills compute their own.
+- `lifecycle:` — `draft` / `reviewed` / `verified` / `disputed` / `archived`. Default `reviewed` for human-authored; only ingest skills set `draft`. A qualitative, human-curated state — transitions are manual.
 
 ## Provenance Markers
 
@@ -218,78 +190,15 @@ Always use vault-relative paths, not bare basenames — some basenames aren't gl
 
 ## Config Resolution Protocol
 
-The vault is self-describing — **no config file or per-vault settings are needed**. The vault is the directory containing `.manifest.json`; every other path derives from that location.
+The vault is self-describing — **zero configuration**, no config file or per-vault settings. The vault is the directory containing `.manifest.json`; every other path derives from it (`_sources/`, `_archives/`, …). Categories are discovered from disk (any top-level dir not prefixed `_` or `.`). No API keys — the agent already has LLM access.
 
-### Vault discovery
-
-1. **Walk up from CWD** — look for `.manifest.json`, stopping at the first match (up to `$HOME` or `/`).
-2. **Global config** — if no vault found and `~/.obsidian-wiki/config` exists, read `VAULT` from it.
-3. **Prompt setup** — if neither, tell the user: "No vault found. Run `wiki-setup` to initialize."
-
-```bash
-find_vault() {
-  dir="$PWD"
-  while [[ "$dir" != "/" ]]; do
-    [[ -f "$dir/.manifest.json" ]] && { echo "$dir"; return; }
-    [[ "$dir" == "$HOME" ]] && break
-    dir="$(dirname "$dir")"
-  done
-  [[ -f "$HOME/.obsidian-wiki/config" ]] && grep -m1 '^VAULT=' "$HOME/.obsidian-wiki/config" | cut -d= -f2-
-}
-```
-
-### Paths derived from the vault location
-
-Everything derives from the vault root — there is no config file:
-
-| Setting | Value |
-|---|---|
-| Vault root | directory containing `.manifest.json` |
-| Sources dir | `$OBSIDIAN_VAULT_PATH/_sources` |
-| Archives dir | `$OBSIDIAN_VAULT_PATH/_archives` |
-| Link format | wikilinks (vault-relative) |
-| Claude history | `$HOME/.claude/projects` if it exists |
-
-Skills MUST infer every path from the vault location. A vault with no config of any kind is the only supported case — that's what keeps it relocatable (`cp -r <vault> /elsewhere && cd /elsewhere` must work with zero edits).
-
-### Vault-scoped state
-
-Skills writing runtime state outside the vault must scope it by vault location, not a global path:
-
-```bash
-VAULT_ID=$(echo "$VAULT" | md5sum 2>/dev/null | cut -c1-8)
-STATE_DIR="$HOME/.obsidian-wiki/state/$VAULT_ID"
-```
-
-The vault path is the input to the hash — copying the vault elsewhere produces a new scope, which is the desired behavior (the new vault is a different instance).
-
-### Standard "Before You Start" block
-
-Every skill's setup section should read:
+**Resolve the vault** by walking up from CWD for `.manifest.json` (stop at `$HOME` or `/`); fall back to `VAULT` in `~/.obsidian-wiki/config`; if neither, tell the user to run `wiki-setup`. The maintenance scripts do this walk-up themselves. Standard skill setup line:
 
 > **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 
-## Relocatability Invariant
+**Relocatability invariant:** `cp -r <vault> <new-location> && cd <new-location>` must produce a fully functional wiki with zero edits — so no absolute paths inside the vault, relative manifest keys only. Runtime state written *outside* the vault is scoped by a hash of the vault path.
 
-The vault is the unit of relocation. A vault must satisfy this invariant:
-
-> **Copy-paste works.** `cp -r <vault> <new-location> && cd <new-location>` must produce a fully functional wiki without editing any file.
-
-This rules out:
-
-- Absolute paths inside the vault pointing back to itself
-- Manifest entries keyed by absolute paths (relative paths only)
-- Symlinks pointing to absolute paths inside the vault
-
-The skills follow this. If you find a script that violates it, that's a bug.
-
-## Configuration
-
-There is none, by design. A vault works with **zero configuration** — no config file, no per-vault settings. The vault is the directory containing `.manifest.json`, and every path derives from it (see the Config Resolution Protocol above). Skills refer to the resolved vault root as `$OBSIDIAN_VAULT_PATH` in their examples; that's just the variable they set from `find_vault`, not a value read from the environment.
-
-Categories are not declared anywhere; they are discovered from disk (any top-level dir not prefixed with `_` or `.`).
-
-No API keys needed — the agent running these skills already has LLM access built in.
+The `find_vault` shell function, the derived-paths table, vault-scoped-state hashing, and the full relocatability rules live in **`references/vault-mechanics.md`**.
 
 ## Modes of Operation
 
@@ -321,8 +230,15 @@ Companion skills (`../`):
 - **wiki-link** — Discover and insert missing wikilinks
 - **wiki-claude-history** — Mine `~/.claude` session data into the wiki
 
-Maintenance scripts (`../../scripts/`):
+Maintenance scripts (`../../scripts/`, symlinked into vaults as `.claude/wiki-scripts/`):
 
+- `wiki-lint.py` — deterministic health checks (orphans, broken links, frontmatter, index, stale, lifecycle, provenance ratios). Used by `wiki-lint`.
+- `wiki-graph.py` — wikilink-graph analysis (hubs, tag cohesion, orphans, bridges, cross-category edges, delta). Used by `wiki-status` insights.
 - `regen-manifest.py` — rebuild `.manifest.json` from filesystem
 - `kebab-rename.py` — mass kebab-case rename + wikilink rewrite
 - `validate-frontmatter.py` — verify every page's YAML frontmatter parses
+
+Reference (`references/`):
+
+- `karpathy-pattern.md` — the original LLM Wiki pattern explained
+- `vault-mechanics.md` — config resolution, relocatability, URL snapshots, category renames (read on demand, not every op)

@@ -276,20 +276,20 @@ For each project with content, create or update the project overview page at `pr
 
 **Write a `summary:` frontmatter field** on every new/updated page — 1–2 sentences, ≤200 chars, answering "what is this page about?" for a reader who hasn't opened it. `wiki-query`'s cheap retrieval path reads this field to avoid opening page bodies.
 
-**Add confidence and lifecycle fields** to every new page's frontmatter:
+**Add a `lifecycle` field** to every new page's frontmatter:
 ```yaml
-base_confidence: 0.42
 lifecycle: draft
 lifecycle_changed: <ISO date today>
 ```
-On update, leave `lifecycle` and `lifecycle_changed` unchanged — only a human editor transitions lifecycle state.
+`lifecycle` is a qualitative, human-curated state (`draft`/`reviewed`/`verified`/`disputed`/`archived`). On update, leave `lifecycle` and `lifecycle_changed` unchanged — only a human editor transitions it.
 
 **Mark provenance** per the convention in `wiki` (Provenance Markers section):
 
 - **Memory files** are mostly extracted — the user wrote them by hand and they're already distilled. Treat memory-derived claims as extracted unless you're stitching together claims from multiple memory files.
 - **Conversation distillation** is mostly inferred. You're synthesizing a coherent claim from many turns of dialogue, often filling in implicit reasoning. Apply `^[inferred]` liberally to synthesized patterns, generalizations across sessions, and "what the user really meant" interpretations.
 - Use `^[ambiguous]` when the user changed their mind across sessions or when assistant and user contradicted each other and the resolution is unclear.
-- Write a `provenance:` frontmatter block on every new/updated page summarizing the rough mix.
+
+The inline markers are the provenance signal — there is no numeric block to maintain.
 
 ## Step 6: Update Manifest, Journal, and Special Files
 

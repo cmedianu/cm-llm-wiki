@@ -16,7 +16,7 @@ You are running an autonomous research loop on a topic, synthesizing what you fi
 1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand what's already in the wiki — don't re-research things the wiki covers well
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it surfaces recent context
-4. Check `$OBSIDIAN_VAULT_PATH/references/research-config.md` if it exists — it may define source preferences, domains to skip, or confidence rules for this vault
+4. Check `$OBSIDIAN_VAULT_PATH/references/research-config.md` if it exists — it may define source preferences or domains to skip for this vault
 
 When writing internal links in generated pages, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
@@ -27,7 +27,6 @@ Confirm the research topic with the user if it's ambiguous. Then proceed.
 If `references/research-config.md` exists in the vault, read it and apply any rules it defines:
 - Source preferences (e.g., prefer academic sources, avoid certain domains)
 - Domains to skip
-- Confidence scoring adjustments
 - Topic-specific constraints
 
 If the file doesn't exist, proceed with defaults.
@@ -93,11 +92,6 @@ created: <ISO-8601 timestamp>
 updated: <ISO-8601 timestamp>
 summary: >-
   <1-2 sentences describing what this source covers, ≤200 chars>
-provenance:
-  extracted: 0.X
-  inferred: 0.X
-  ambiguous: 0.X
-base_confidence: <0.17 + 0.5 × classify(url) for a single source>
 lifecycle: draft
 lifecycle_changed: <ISO date today>
 ---
@@ -132,11 +126,6 @@ created: <ISO-8601 timestamp>
 updated: <ISO-8601 timestamp>
 summary: >-
   Synthesis of <N>-round research on <topic>. Covers <core findings in ≤200 chars>.
-provenance:
-  extracted: 0.X
-  inferred: 0.X
-  ambiguous: 0.X
-base_confidence: <min(N_unique_sources/3,1.0)×0.5 + avg_source_quality×0.5>
 lifecycle: draft
 lifecycle_changed: <ISO date today>
 ---

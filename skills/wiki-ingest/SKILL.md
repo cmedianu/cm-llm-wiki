@@ -18,7 +18,7 @@ You are ingesting source documents into an Obsidian wiki. Your job is not to sum
 1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `.manifest.json` at the vault root to check what's already been ingested
 3. Read `index.md` to understand current wiki content
-4. Read `log.md` to understand recent activity
+4. Read the tail of `log.md` (last ~20 lines), or `hot.md`, for recent activity — `log.md` is append-only and unbounded, so never read it whole
 
 When writing internal links in Step 5, apply the link format described in `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
@@ -143,20 +143,14 @@ For each page in your plan:
 
 **Write a `summary:` frontmatter field** on every new page (1–2 sentences, ≤200 characters) answering "what is this page about?" for a reader who hasn't opened it. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
 
-**Add confidence and lifecycle fields** to every new page's frontmatter:
+**Add a `lifecycle` field** to every new page's frontmatter:
 
 ```yaml
-base_confidence: <computed>   # [0.0, 1.0] — see wiki/SKILL.md Confidence formula
 lifecycle: draft
 lifecycle_changed: "<ISO date today>"
 ```
 
-Compute `base_confidence` using the formula from `wiki/SKILL.md` (Confidence and Lifecycle section):
-- Count distinct source_ids for this page
-- Classify each source's quality bucket
-- `base_confidence = min(N/3, 1.0) × 0.5 + avg_quality × 0.5`
-
-When **updating** an existing page, recompute `base_confidence` only if sources changed materially (source added or removed). Do not rewrite it on every update — this avoids git churn. Leave `lifecycle` unchanged on update; only the human editor promotes lifecycle state.
+`lifecycle` is a qualitative, human-curated state — one of `draft` / `reviewed` / `verified` / `disputed` / `archived`. Ingest sets `draft`; only the human editor promotes it. Leave it unchanged on update.
 
 **Apply a `visibility/` tag** if the content clearly warrants one (optional):
 - `visibility/internal` — architecture internals, system credentials patterns, team-only context
@@ -169,7 +163,8 @@ When **updating** an existing page, recompute `base_confidence` only if sources 
 - Inferred claims get a trailing `^[inferred]`
 - Ambiguous/contested claims get a trailing `^[ambiguous]`
 - Extracted claims need no marker
-- After writing the page, count rough fractions and write them to a `provenance:` frontmatter block (extracted/inferred/ambiguous summing to ~1.0). When updating an existing page, recompute and update the block.
+
+These inline markers are the provenance signal — there is no numeric summary to maintain.
 
 ### Step 6: Update Cross-References
 
@@ -232,7 +227,7 @@ After ingesting, verify:
 - [ ] `index.md` reflects all changes
 - [ ] `log.md` has the ingest entry
 - [ ] Source attribution is present for every new claim
-- [ ] Inferred and ambiguous claims are marked with `^[inferred]` / `^[ambiguous]`; `provenance:` frontmatter block is present on new and updated pages
+- [ ] Inferred and ambiguous claims are marked with `^[inferred]` / `^[ambiguous]`
 - [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, ≤200 chars)
 
 ## Reference

@@ -20,7 +20,7 @@ You are weaving the wiki's knowledge graph tighter by finding and inserting miss
 
 1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
 2. Read `index.md` to get the full inventory of pages and their one-line descriptions
-3. Skim `log.md` to see what was recently ingested (focus linking effort on new pages)
+3. Skim the tail of `log.md` (last ~20 lines), or `hot.md`, to see what was recently ingested (focus linking effort on new pages) — don't read the whole append-only log
 
 When inserting links in Step 4, write them as vault-relative wikilinks (see Link Format in `wiki/SKILL.md`).
 
@@ -67,33 +67,15 @@ For each page in the vault:
 - **Don't link inside code blocks** or frontmatter
 - **Don't double-link** — if `[[foo]]` already appears on the page, don't add another
 
-## Step 3: Score and Rank Suggestions
+## Step 3: Judge Which Links Are Worth Adding
 
-Not every possible link is worth adding. Score each candidate using a composite signal, then tag it with a confidence label.
+Not every possible link is worth adding. Judge each candidate qualitatively and sort it into one of three buckets — reusing the wiki's provenance vocabulary. No arithmetic; a short judgement is enough:
 
-### Scoring
+- **strong (EXTRACTED)** — the page names the target outright (exact filename / title / alias mention) or it's an obvious topical fit. Apply inline.
+- **plausible (INFERRED)** — no direct mention, but the pages clearly belong together: they share a clear topic, sit in the same project, span two knowledge layers (e.g. `concepts/` ↔ `entities/`), or a loose page would benefit from reaching a hub. Apply inline or in a `## Related` section, and carry the label so the user can review.
+- **skip (AMBIGUOUS)** — only a generic-word overlap or a partial name match. Don't add it unless the user explicitly asks to connect loose pages.
 
-| Signal | Points | Example |
-|---|---|---|
-| **Exact name match in text** | +4 | "MyProject" appears in body text → link to my-project.md |
-| **Shared tags (2+)** | +2 | Both tagged `#ai #agent` but no link between them |
-| **Same project, no link** | +2 | Both under `projects/my-project/` but don't reference each other |
-| **Mentioned entity/concept** | +2 | Page mentions "knowledge graphs" → link to `[[concepts/knowledge-graphs]]` |
-| **Cross-category connection** | +2 | Source is in `concepts/`, target is in `entities/` (or `skills/` ↔ `synthesis/`) — different knowledge layers make this link more architecturally valuable |
-| **Peripheral→hub reach** | +2 | Source page has ≤ 2 total links (peripheral) but target has ≥ 8 (hub) — connecting a loose page to a load-bearing concept |
-| **Partial name match** | +1 | "graph" appears but page is `knowledge-graphs` — plausible but ambiguous |
-
-### Confidence labels
-
-Tag each candidate with a confidence label based on its score:
-
-| Score | Label | Action |
-|---|---|---|
-| ≥ 6 | **EXTRACTED** | Link is effectively certain — exact mention or very strong match. Apply inline. |
-| 3–5 | **INFERRED** | Link is a reasonable inference — shared context, cross-category, peripheral→hub. Apply inline or as Related section. |
-| 1–2 | **AMBIGUOUS** | Weak or partial match. Skip unless user specifically asks to connect loose pages. |
-
-Only act on **EXTRACTED** and **INFERRED** candidates. Include the confidence label in the Cross-Link Report so the user can review INFERRED links before trusting them.
+Act on **strong** and **plausible** candidates; skip the rest. Favour precision over recall — a wrong link is worse than a missing one. Include the label in the Cross-Link Report so INFERRED links are reviewable.
 
 ## Step 4: Apply Links
 
@@ -128,31 +110,7 @@ If the term isn't mentioned naturally in the body but the pages are semantically
 
 If a `## Related` section already exists, append to it. Don't duplicate existing entries.
 
-## Step 5: Score Misc Page Affinity
-
-After the main linking pass, update affinity scores for all pages in `misc/` (pages with `promotion_status: misc` in their frontmatter, or located under the `misc/` directory).
-
-For each misc page:
-
-1. **Collect outgoing links** — all `[[wikilinks]]` in the page body
-2. **Collect incoming links** — grep the vault for `[[misc/<slug>]]` and `[[<slug>]]` references
-3. For each linked page (both directions), check if it belongs to a project:
-   - Lives under `projects/<project-name>/`
-   - Has a `project:` frontmatter field matching a project name
-4. Group by project name and sum: `outgoing_links + incoming_links`
-5. Update the `affinity` frontmatter block on the misc page:
-
-```yaml
-affinity:
-  obsidian-wiki: 3
-  another-project: 1
-```
-
-6. If any project's score ≥ 3: flag this page as a **promotion candidate** and record it for the report
-
-**Efficiency note:** only read the full body of misc pages — other pages only need a frontmatter grep to determine their project membership.
-
-## Step 6: Report
+## Step 5: Report
 
 Present a summary:
 
@@ -171,25 +129,18 @@ Present a summary:
 - `references/foo.md` — no incoming or outgoing links found
 - `concepts/bar.md` — could not find related pages
 
-### Misc Promotion Candidates: N
-Pages in misc/ that have ≥ 3 connections to a single project — ready to be promoted:
-
-| Page | Top Project | Score |
-|---|---|---|
-| `misc/web-martinfowler-articles-microservices.md` | `obsidian-wiki` | 4 |
-
-To promote: move the page to `projects/<project-name>/references/` and update all backlinks.
+(Misc-page promotion candidates are reported separately by `wiki-lint.py`, which counts each misc page's links into projects on demand — no affinity score is stored on pages.)
 
 ### Pages Skipped: 3
 - `index.md`, `log.md` — special files
 - `_archives/*` — archived content
 ```
 
-## Step 7: Update Log and Hot Cache
+## Step 6: Update Log and Hot Cache
 
 Append to `log.md`:
 ```
-- [TIMESTAMP] CROSS_LINK pages_scanned=N links_added=M pages_modified=P orphans_remaining=Q misc_affinity_updated=R promotion_candidates=S
+- [TIMESTAMP] CROSS_LINK pages_scanned=N links_added=M pages_modified=P orphans_remaining=Q
 ```
 
 **`hot.md`** — Read `$OBSIDIAN_VAULT_PATH/hot.md` (create from the template in `wiki-ingest` if missing). Update **Recent Activity** with a one-line summary of what was linked — e.g. "Cross-linked 23 mentions across 12 pages; 2 orphans remain." Keep the last 3 operations. Update `updated` timestamp.

@@ -38,3 +38,9 @@ that vault's own `CLAUDE.md`, not here.
   Describe the collection ("Catalog of the vault's pages") instead of counting it. If a
   count is genuinely needed, compute it at read time rather than freezing it in text. This
   applies to any quantity that drifts, not just page counts.
+- **Provenance is qualitative, not numeric.** Trustworthiness lives in the inline markers
+  `^[inferred]` / `^[ambiguous]` (default = extracted) and in the human-set `lifecycle`
+  state — not in confidence decimals, affinity integers, or cohesion ratios. Anything
+  graph- or count-shaped (orphans, hubs, cohesion, link/synthesis ranking) is computed on
+  demand by the scripts (`wiki-lint.py`, `wiki-graph.py`), never hand-rolled into a stored
+  score. Don't reintroduce numeric scoring into pages.

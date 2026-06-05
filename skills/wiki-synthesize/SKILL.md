@@ -50,19 +50,14 @@ Remove covered pairs from your candidate list.
 
 ## Step 3: Score and Rank Candidates
 
-For each remaining candidate pair (or cluster of 3+), assign a synthesis value score:
+For each remaining candidate pair (or cluster of 3+), judge how much a dedicated synthesis page would add. Prioritize pairs that:
 
-| Signal | Points |
-|---|---|
-| Co-occurrence count ≥ 5 | +3 |
-| Co-occurrence count 3-4 | +2 |
-| Co-occurrence count 1-2 | +1 |
-| Concepts are in different categories (cross-domain) | +2 |
-| Concepts share tags but live in different folders | +1 |
-| One or both concepts are tagged as hubs in `_insights.md` | +1 |
-| A synthesis would resolve a flagged contradiction | +2 |
+- **co-occur across many pages** — the more pages link to both, the more load-bearing the connection
+- **cross domains** — two concepts from different categories (or different tag clusters) yield a less obvious, more valuable synthesis than two neighbours
+- **would resolve a flagged contradiction** — reconciling a tension the wiki already noted beats restating agreement
+- **join hubs** — if `wiki-graph.py` (or `_insights.md`) marks one or both as a hub, the synthesis reaches more of the wiki
 
-Pick the top 5 candidates. If the user asked for a specific topic ("synthesize everything about observability"), filter candidates to that domain first.
+Write the few strongest — aim for ~5. If the user asked for a specific topic ("synthesize everything about observability"), filter candidates to that domain first.
 
 ## Step 4: Draft Synthesis Pages
 
@@ -77,11 +72,6 @@ sources: [<all pages that link to both>]
 created: TIMESTAMP
 updated: TIMESTAMP
 summary: "Cross-cutting synthesis of how <A> and <B> interact, with implications for <domain>."
-provenance:
-  extracted: 0.2
-  inferred: 0.7
-  ambiguous: 0.1
-base_confidence: <min(base_confidence of all input pages)>
 lifecycle: draft
 lifecycle_changed: TIMESTAMP_DATE
 ---
