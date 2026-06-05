@@ -1,0 +1,18 @@
+# Normalize all text files to LF in the repository.
+# Keeps line endings consistent across Linux/WSL, macOS, and Windows
+# regardless of each contributor's local core.autocrlf setting.
+* text=auto eol=lf
+
+# Scripts must stay LF even when checked out on Windows.
+*.sh   text eol=lf
+*.ps1  text eol=lf
+*.py   text eol=lf
+*.md   text eol=lf
+
+# Treat the license and common binaries as binary (no EOL munging).
+LICENSE text eol=lf
+*.png binary
+*.jpg binary
+*.gif binary
+*.pdf binary
+*.ico binary
