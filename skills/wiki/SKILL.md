@@ -122,7 +122,7 @@ Use [[wikilinks]] to connect to related pages.
 
 ### Folder naming convention
 
-Top-level folders (categories) and subfolders both use **kebab-case-lowercase**, matching the filename convention. Examples: `ai/`, `git/`, `mcp/`, `science-fair/`, `team-meta/`.
+Top-level folders (categories) and subfolders both use **kebab-case-lowercase**, matching the filename convention. Examples: `ai/`, `git/`, `mcp/`, `science-fair/`, `projects/`.
 
 Why: consistent with kebab-case filenames, URL-safe, no shift-key ambiguity, plays nicely with Obsidian wikilink resolution (case-insensitive on Windows but case-sensitive on Linux/WSL — lowercase removes the footgun).
 

@@ -44,3 +44,12 @@ that vault's own `CLAUDE.md`, not here.
   graph- or count-shaped (orphans, hubs, cohesion, link/synthesis ranking) is computed on
   demand by the scripts (`wiki-lint.py`, `wiki-graph.py`), never hand-rolled into a stored
   score. Don't reintroduce numeric scoring into pages.
+- **Indexes respect privacy scope — no upward leak.** A page's title/summary may only appear in
+  an `index.md` within its *own* privacy scope. If a vault designates **private areas** (declared
+  as `private_paths` in `.manifest.json` — path prefixes like `me` or `context/me`), then each
+  private area keeps its **own second-level `index.md`** cataloguing its pages, and any more-public
+  index (the shareable root, or an index in another area) references that area only by a **single
+  link to its section `index.md`** with a generic label — never by listing the private pages or
+  their summaries. Rule of thumb: *a summary travels only as far up as its own privacy scope.*
+  `wiki-lint.py` enforces this (`index_privacy_leak`); the key is preserved across
+  `regen-manifest.py` runs. Vaults with no `private_paths` are unaffected (the check is a no-op).

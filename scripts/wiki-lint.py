@@ -20,6 +20,7 @@ Checks performed:
   8. Lifecycle + supersession — invalid lifecycle values, broken/cyclic superseded_by.
   9. Provenance marker ratios — ^[inferred] / ^[ambiguous] density by page.
   10. Misc promotion candidates — misc/ pages with strong affinity to a project.
+  11. Index privacy leak — a private page (or its summary) listed in a more-public index.
 
 Usage:
   uv run .claude/wiki-scripts/wiki-lint.py [VAULT] [--format json|md]
@@ -166,8 +167,10 @@ def extract_wikilinks(path: pathlib.Path) -> list[tuple[int, str]]:
             continue
         for m in _WIKILINK_RE.finditer(line):
             raw = m.group(1)
-            # strip display alias
-            target = raw.split("|")[0].strip()
+            # strip display alias; treat a table-escaped pipe (\|) as a normal alias
+            # separator so [[target\|Alias]] inside a Markdown table isn't misread as a
+            # broken link to "target\".
+            target = raw.replace("\\|", "|").split("|")[0].strip()
             # strip heading/block anchors
             target = re.split(r"[#^]", target)[0].strip()
             if target:
@@ -215,6 +218,47 @@ def build_resolver(vault: pathlib.Path, content_pages: list[pathlib.Path]):
         return None
 
     return resolve
+
+
+# ---------------------------------------------------------------------------
+# Index discovery + privacy-scope config
+# ---------------------------------------------------------------------------
+
+def find_all_indexes(vault: pathlib.Path) -> list[pathlib.Path]:
+    """All index.md files in the vault (root + section indexes), skipping dot/underscore dirs."""
+    out = []
+    for f in sorted(vault.rglob("index.md")):
+        rel = f.relative_to(vault)
+        if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
+            continue
+        out.append(f)
+    return out
+
+
+def load_private_paths(vault: pathlib.Path) -> list[str]:
+    """Vault-relative path prefixes designated private, read from .manifest.json's
+    `private_paths` key. Empty list (the default) makes the privacy check a no-op,
+    so this is safe for vaults that don't designate any private areas."""
+    mf = vault / ".manifest.json"
+    try:
+        data = json.loads(mf.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return []
+    pp = data.get("private_paths")
+    if not isinstance(pp, list):
+        return []
+    return [str(p).strip("/").lower() for p in pp if isinstance(p, str) and str(p).strip("/")]
+
+
+def private_area_for(rel_posix: str, private_paths: list[str]) -> Optional[str]:
+    """Longest private-area prefix containing this vault-relative posix path, or None."""
+    rl = rel_posix.lower()
+    best = None
+    for p in private_paths:
+        if rl == p or rl.startswith(p + "/"):
+            if best is None or len(p) > len(best):
+                best = p
+    return best
 
 
 # ---------------------------------------------------------------------------
@@ -339,22 +383,24 @@ def check_index_consistency(
         if p.is_dir() and not p.name.startswith(".") and not p.name.startswith("_")
     }
 
-    # (a) content pages not referenced in index.md
-    # We check by looking at all wikilinks in index.md and what they resolve to
-    index_links = extract_wikilinks(index_path)
-    resolved_from_index: set[pathlib.Path] = set()
-    for _lineno, target in index_links:
-        r = resolve(target)
-        if r is not None:
-            resolved_from_index.add(r)
+    # (a) content pages not referenced in ANY index.md (root or a section index).
+    # The root index links down to section indexes; pages in a sub-area (e.g. a private
+    # namespace) are catalogued in their own second-level index, so a page counts as
+    # indexed if *any* index lists it — not only the root.
+    index_links = extract_wikilinks(index_path)  # root index, used by (b)-(d) below
+    resolved_from_any_index: set[pathlib.Path] = set()
+    for idx in find_all_indexes(vault):
+        for _lineno, target in extract_wikilinks(idx):
+            r = resolve(target)
+            if r is not None:
+                resolved_from_any_index.add(r)
 
-    content_set = set(content_pages)
     for page in content_pages:
-        if page not in resolved_from_index:
+        if page not in resolved_from_any_index:
             rel = str(page.relative_to(vault))
             out.append(finding(
                 "warning", "missing_from_index", rel,
-                "content page not referenced in index.md",
+                "content page not referenced in any index.md (root or section)",
             ))
 
     # (b) broken wikilinks in index.md — already covered by check_broken_links_and_orphans
@@ -793,6 +839,46 @@ def check_misc_promotion(
     return out
 
 
+def check_index_privacy_leak(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+    resolve,
+    private_paths: list[str],
+) -> list[dict]:
+    """Check 11: a private content page must not be listed in a more-public index.
+
+    A page under a private area P may only be catalogued in index.md files that live
+    inside P (its own second-level index). A more-public index (the shareable root, or
+    an index in another area) must reference P only via a link to P's own section
+    index — never by listing P's content pages, since the entry carries the summary.
+
+    Index→section-index links are inherently exempt: a section index is scaffolding,
+    not a content page, so it never appears in `content_pages` and is skipped below.
+    No-op when the vault designates no private_paths.
+    """
+    out = []
+    if not private_paths:
+        return out
+    content_set = set(content_pages)
+    for idx in find_all_indexes(vault):
+        idx_rel = idx.relative_to(vault).as_posix()
+        for lineno, target in extract_wikilinks(idx):
+            r = resolve(target)
+            if r is None or r not in content_set:
+                continue  # unresolved, or a section index (scaffolding) — fine
+            page_area = private_area_for(r.relative_to(vault).as_posix(), private_paths)
+            if page_area is None:
+                continue  # linked page isn't private
+            if idx_rel.startswith(page_area + "/"):
+                continue  # index lives inside the page's private area — in scope
+            out.append(finding(
+                "error", "index_privacy_leak", idx_rel,
+                f"private page [[{target}]] is listed in a more-public index — "
+                f"link to the '{page_area}' section index instead", lineno,
+            ))
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Output formatters
 # ---------------------------------------------------------------------------
@@ -817,6 +903,7 @@ _CATEGORY_SECTION = {
     "supersession_cycle": "Supersession Cycle",
     "provenance_ratio": "Provenance Ratio Flags",
     "misc_promotion_candidate": "Misc Promotion Candidates",
+    "index_privacy_leak": "Index Privacy Leak (private page in a more-public index)",
 }
 
 
@@ -906,6 +993,7 @@ def main() -> int:
     ]
 
     resolve = build_resolver(vault, content_pages)
+    private_paths = load_private_paths(vault)
 
     all_findings: list[dict] = []
 
@@ -934,6 +1022,9 @@ def main() -> int:
 
     # Check 10: misc promotion candidates
     all_findings.extend(check_misc_promotion(vault, content_pages, resolve))
+
+    # Check 11: index privacy leak
+    all_findings.extend(check_index_privacy_leak(vault, content_pages, resolve, private_paths))
 
     pages_checked = len(content_pages)
 

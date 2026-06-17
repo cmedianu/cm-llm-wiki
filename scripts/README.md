@@ -23,7 +23,7 @@ the LLM doesn't recompute mechanical things by reading every page:
 
 | Script | Backs | Computes |
 |---|---|---|
-| `wiki-lint.py` | `wiki-lint` | orphans, broken links, missing/oversized frontmatter & summary, index drift, hardcoded counts, stale pages, lifecycle/supersession integrity, provenance marker ratios, misc-promotion candidates |
+| `wiki-lint.py` | `wiki-lint` | orphans, broken links, missing/oversized frontmatter & summary, index drift, hardcoded counts, stale pages, lifecycle/supersession integrity, provenance marker ratios, misc-promotion candidates, index privacy leaks |
 | `wiki-graph.py` | `wiki-status` (insights) | wikilink graph: hubs, tag cohesion, orphans/orphan-adjacent, bridges (articulation points), cross-category edges, run-to-run delta |
 
 The rest cover **specific operations the skills do not implement**:
@@ -61,10 +61,19 @@ uv run .claude\wiki-scripts\wiki-lint.py --format md
 Runs every mechanical health check in one read-only pass and prints a report:
 orphans, broken wikilinks, missing/oversized frontmatter and summaries, index
 drift, hardcoded inventory counts, stale pages, lifecycle/supersession integrity,
-provenance marker ratios, and misc-promotion candidates. Exit `0` when there are
-no error-level findings, `1` when there are (broken links, missing required
-frontmatter, invalid lifecycle/supersession) — so it works as a pre-commit /
-pre-publish gate. The `wiki-lint` skill calls this, then adds the judgement-only
+provenance marker ratios, misc-promotion candidates, and **index privacy leaks**.
+Exit `0` when there are no error-level findings, `1` when there are (broken links,
+missing required frontmatter, invalid lifecycle/supersession, privacy leaks) — so
+it works as a pre-commit / pre-publish gate.
+
+**Index privacy leak** (`index_privacy_leak`): if the vault declares `private_paths`
+in `.manifest.json` (e.g. `["me", "context/me"]`), a private content page must only be
+listed in an `index.md` inside its own private area. A more-public index (the shareable
+root, or another area's index) may reference the area only via a link to its section
+`index.md` — never by listing private pages or their summaries. The `missing_from_index`
+check is privacy-aware too: a page counts as indexed if *any* index (root or section)
+lists it. No `private_paths` → both behave exactly as before. The key survives
+`regen-manifest.py`. The `wiki-lint` skill calls this, then adds the judgement-only
 checks it can't: contradictions, provenance interpretation, and visibility/PII.
 Read-only; never writes. Needs `pyyaml` via the PEP 723 header — nothing to install.
 

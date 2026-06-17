@@ -117,6 +117,10 @@ def main():
         "updated": now,
         "sources": sources,
     }
+    # Preserve vault-level config that lives in the manifest but isn't rebuilt from
+    # the file walk (e.g. private_paths consumed by wiki-lint's privacy-scope check).
+    if "private_paths" in prev:
+        manifest["private_paths"] = prev["private_paths"]
 
     if DRY:
         print("[DRY-RUN] no file written")
