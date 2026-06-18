@@ -51,7 +51,7 @@ SCAFFOLDING = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md"}
 
 REQUIRED_FRONTMATTER = {"title", "category", "tags", "sources", "created", "updated"}
 
-VALID_LIFECYCLES = {"draft", "reviewed", "verified", "disputed", "archived"}
+VALID_LIFECYCLES = {"draft", "reviewed", "living", "archived"}
 
 # Headings in index.md that are allowed even if they don't match a real folder
 INDEX_META_HEADINGS = {"Root", "Meta", "Index", "Overview"}

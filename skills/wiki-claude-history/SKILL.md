@@ -281,7 +281,7 @@ For each project with content, create or update the project overview page at `pr
 lifecycle: draft
 lifecycle_changed: <ISO date today>
 ```
-`lifecycle` is a qualitative, human-curated state (`draft`/`reviewed`/`verified`/`disputed`/`archived`). On update, leave `lifecycle` and `lifecycle_changed` unchanged — only a human editor transitions it.
+`lifecycle` is a qualitative, human-curated state (`draft`/`reviewed`/`living`/`archived`). On update, leave `lifecycle` and `lifecycle_changed` unchanged — only a human editor transitions it.
 
 **Mark provenance** per the convention in `wiki` (Provenance Markers section):
 

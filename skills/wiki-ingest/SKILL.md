@@ -150,7 +150,7 @@ lifecycle: draft
 lifecycle_changed: "<ISO date today>"
 ```
 
-`lifecycle` is a qualitative, human-curated state — one of `draft` / `reviewed` / `verified` / `disputed` / `archived`. Ingest sets `draft`; only the human editor promotes it. Leave it unchanged on update.
+`lifecycle` is a qualitative, human-curated state — one of `draft` / `reviewed` / `living` / `archived`. Ingest sets `draft`; only the human editor promotes it. Leave it unchanged on update.
 
 **Apply a `visibility/` tag** if the content clearly warrants one (optional):
 - `visibility/internal` — architecture internals, system credentials patterns, team-only context

@@ -133,7 +133,7 @@ Exceptions that may keep TitleCase: none enforced, but if you prefer prettier si
 Optional frontmatter fields (ingest skills may populate; hand-authored pages can omit):
 
 - `aliases:` — alternate names this page should also resolve as.
-- `lifecycle:` — `draft` / `reviewed` / `verified` / `disputed` / `archived`. Default `reviewed` for human-authored; only ingest skills set `draft`. A qualitative, human-curated state — transitions are manual.
+- `lifecycle:` — `draft` / `reviewed` / `living` / `archived`. Default `reviewed` for human-authored; only ingest skills set `draft`. `living` = intentionally never-finished pages updated continuously (dossiers, running ledgers); `archived` = retired or superseded (pairs with `superseded_by`). A qualitative, human-curated state — transitions are manual.
 
 ## Provenance Markers
 
