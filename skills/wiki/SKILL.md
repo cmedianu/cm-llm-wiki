@@ -192,9 +192,17 @@ Always use vault-relative paths, not bare basenames — some basenames aren't gl
 
 The vault is self-describing — **zero configuration**, no config file or per-vault settings. The vault is the directory containing `.manifest.json`; every other path derives from it (`_sources/`, `_archives/`, …). Categories are discovered from disk (any top-level dir not prefixed `_` or `.`). No API keys — the agent already has LLM access.
 
-**Resolve the vault** by walking up from CWD for `.manifest.json` (stop at `$HOME` or `/`); fall back to `VAULT` in `~/.obsidian-wiki/config`; if neither, tell the user to run `wiki-setup`. The maintenance scripts do this walk-up themselves. Standard skill setup line:
+**Resolve the vault** in this order, stopping at the first hit:
 
-> **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Walk up from CWD** for `.manifest.json` (stop at `$HOME` or `/`). Found means you are inside a vault; use it. This always wins, so working inside a vault never needs any config.
+2. **Project map.** Look up the current project root (CWD or nearest ancestor) in `~/.obsidian-wiki/projects.json` (a `{ "project-path": "vault-name" }` map). A hit resolves to that registered vault's `OBSIDIAN_VAULT_PATH` (from `~/.obsidian-wiki/config.<name>`).
+3. **Quiz (interactive).** No manifest above you and no project-map entry means ask: list the registered vaults (`~/.obsidian-wiki/config.*`) and have the user pick one, then **persist** the choice to `projects.json` under the current project root so you do not ask again. `wiki-switch` owns this quiz; other skills invoke the same behaviour.
+4. **Headless fallback.** When no user is present (cron, scripted runs), read `OBSIDIAN_VAULT_PATH` from the active global config `~/.obsidian-wiki/config` (a symlink to one `config.<name>`).
+5. **Nothing registered** at all: tell the user to run `wiki-setup`.
+
+The maintenance scripts do the walk-up (step 1) themselves. Standard skill setup line:
+
+> **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 
 **Relocatability invariant:** `cp -r <vault> <new-location> && cd <new-location>` must produce a fully functional wiki with zero edits — so no absolute paths inside the vault, relative manifest keys only. Runtime state written *outside* the vault is scoped by a hash of the vault path.
 

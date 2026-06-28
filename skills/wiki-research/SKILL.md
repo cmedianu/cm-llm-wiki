@@ -13,7 +13,7 @@ You are running an autonomous research loop on a topic, synthesizing what you fi
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand what's already in the wiki — don't re-research things the wiki covers well
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it surfaces recent context
 4. Check `$OBSIDIAN_VAULT_PATH/references/research-config.md` if it exists — it may define source preferences or domains to skip for this vault

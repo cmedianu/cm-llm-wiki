@@ -15,7 +15,7 @@ This is the whole point of the framework: don't burn tokens reading every page t
 
 ## Before You Start
 
-**Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). The scripts do their own vault resolution, so you can run them from anywhere inside the vault.
+**Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md` (manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz). The scripts do their own vault resolution, so you can run them from anywhere inside the vault.
 
 ## Step 1: Run the deterministic linter
 

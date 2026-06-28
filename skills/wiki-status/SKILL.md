@@ -16,7 +16,7 @@ You are computing the current state of the wiki: what's been ingested, what's ne
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. Read `.manifest.json` at the vault root — this is the ingest tracking ledger
 
 ## The Manifest

@@ -14,7 +14,7 @@ You are performing a destructive operation on the wiki. Always archive first, al
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. Read `.manifest.json` to understand current state
 3. **Confirm the user's intent.** This skill supports three modes:
    - **Archive only** — snapshot current wiki, no rebuild

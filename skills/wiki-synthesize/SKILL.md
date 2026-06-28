@@ -14,7 +14,7 @@ You are scanning the wiki for concepts that co-occur across many pages but have 
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. Read `index.md` to get the full page inventory.
 3. Read `hot.md` if it exists — it surfaces recent activity and active threads that may already point to synthesis opportunities.
 4. Read `_meta/taxonomy.md` to understand the tag vocabulary.

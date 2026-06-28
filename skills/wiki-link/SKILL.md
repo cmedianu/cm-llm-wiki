@@ -18,7 +18,7 @@ You are weaving the wiki's knowledge graph tighter by finding and inserting miss
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. Read `index.md` to get the full inventory of pages and their one-line descriptions
 3. Skim the tail of `log.md` (last ~20 lines), or `hot.md`, to see what was recently ingested (focus linking effort on new pages) — don't read the whole append-only log
 

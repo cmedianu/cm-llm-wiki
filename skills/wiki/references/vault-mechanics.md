@@ -8,23 +8,50 @@ The vault is self-describing — **no config file or per-vault settings are need
 
 ### Vault discovery
 
-1. **Walk up from CWD** — look for `.manifest.json`, stopping at the first match (up to `$HOME` or `/`).
-2. **Global config** — if no vault found and `~/.obsidian-wiki/config` exists, read `VAULT` from it.
-3. **Prompt setup** — if neither, tell the user: "No vault found. Run `wiki-setup` to initialize."
+Resolve in order, first hit wins:
+
+1. **Walk up from CWD** for `.manifest.json` (up to `$HOME` or `/`). Inside a vault always wins; needs no config.
+2. **Project map** — look up the project root (CWD or nearest ancestor) in `~/.obsidian-wiki/projects.json`, a flat `{ "project-path": "vault-name" }` map. A hit resolves the name to its `OBSIDIAN_VAULT_PATH` in `~/.obsidian-wiki/config.<name>`.
+3. **Quiz (interactive)** — neither of the above means ask the user to pick from the registered vaults (`~/.obsidian-wiki/config.*`), then write the choice into `projects.json` so it sticks for this project. See `wiki-switch`.
+4. **Headless fallback** — when no user is present (cron/scripts), read `OBSIDIAN_VAULT_PATH` from the active global config `~/.obsidian-wiki/config` (a symlink to one `config.<name>`).
+5. **Prompt setup** — nothing registered: "No vault found. Run `wiki-setup` to initialize."
 
 ```bash
+# steps 1, 2, 4 (non-interactive). Step 3 (quiz) is agent-driven, not shell.
 find_vault() {
   dir="$PWD"
   while [[ "$dir" != "/" ]]; do
-    [[ -f "$dir/.manifest.json" ]] && { echo "$dir"; return; }
+    [[ -f "$dir/.manifest.json" ]] && { echo "$dir"; return; }     # 1: walk-up
     [[ "$dir" == "$HOME" ]] && break
     dir="$(dirname "$dir")"
   done
-  [[ -f "$HOME/.obsidian-wiki/config" ]] && grep -m1 '^VAULT=' "$HOME/.obsidian-wiki/config" | cut -d= -f2-
+  local map="$HOME/.obsidian-wiki/projects.json" name
+  if [[ -f "$map" ]]; then                                          # 2: project map
+    dir="$PWD"
+    while [[ "$dir" != "/" ]]; do
+      name=$(python3 -c "import json,sys;print(json.load(open('$map')).get('$dir',''))" 2>/dev/null)
+      [[ -n "$name" ]] && { vault_path "$name"; return; }
+      [[ "$dir" == "$HOME" ]] && break
+      dir="$(dirname "$dir")"
+    done
+  fi
+  # 4: headless fallback to the active global config
+  [[ -f "$HOME/.obsidian-wiki/config" ]] && grep -m1 '^OBSIDIAN_VAULT_PATH=' "$HOME/.obsidian-wiki/config" | cut -d= -f2-
 }
+vault_path() { grep -m1 '^OBSIDIAN_VAULT_PATH=' "$HOME/.obsidian-wiki/config.$1" | cut -d= -f2-; }
 ```
 
-The maintenance scripts (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`, …) implement this same walk-up internally, so you can run them from anywhere inside the vault.
+The maintenance scripts (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`, …) implement the walk-up (step 1) internally, so you can run them from anywhere inside the vault.
+
+### Project map (`~/.obsidian-wiki/projects.json`)
+
+A single home-level file maps a project directory to a registered vault name, so running a wiki skill from a non-wiki project targets the right vault without dropping any file into that project's repo:
+
+```json
+{ "/home/me/code/some-app": "personal", "/home/me/work/acme": "strata" }
+```
+
+Keys are absolute project paths; values are registry names (`config.<name>`). The quiz (step 3) writes here; `wiki-switch` reads and manages it. Keep it home-level, never per-repo, so unrelated projects stay clean and nothing leaks into git.
 
 ### Paths derived from the vault location
 
@@ -55,7 +82,7 @@ The vault path is the input to the hash — copying the vault elsewhere produces
 
 Every skill's setup section should read:
 
-> **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+> **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 
 ## Relocatability Invariant
 

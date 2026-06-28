@@ -13,7 +13,7 @@ You are distilling knowledge from the current project into the user's Obsidian w
 
 ## Before You Start
 
-1. **Resolve vault** — walk up from CWD for `.manifest.json` (per the Config Resolution Protocol in `wiki/SKILL.md`). All paths derive from the vault root.
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 3. Read `$OBSIDIAN_VAULT_PATH/.manifest.json` to check if this project has been synced before.
 4. Read `$OBSIDIAN_VAULT_PATH/index.md` to know what the wiki already contains.
 

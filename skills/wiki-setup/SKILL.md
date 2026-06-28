@@ -16,7 +16,9 @@ You are setting up a new Obsidian wiki vault (or repairing an existing one).
 
 Ask the user where the vault should live (e.g. `~/Documents/obsidian-wiki-vault`). The vault is self-describing: its directory contains `.manifest.json`, and every other path the skills need is derived from there by default (`<vault>/_sources/` for raw inputs, `<vault>/_archives/` for snapshots, `$HOME/.claude/projects` for Claude history).
 
-**No config file is created at setup — and none is needed.** The vault is defined by where `.manifest.json` lives, and skills derive every path from that. There is nothing to configure.
+**No config file is created *inside* the vault — and none is needed.** The vault is defined by where `.manifest.json` lives, and skills derive every path from that, so the vault stays relocatable.
+
+Optionally **register** the vault so it is selectable from other (non-wiki) projects: `/wiki-switch new <name>` writes `~/.obsidian-wiki/config.<name>` (a home-level pointer, never inside the vault). Registered vaults appear in the `wiki-switch` quiz that other skills fall back to when run outside any vault. Registration is convenience, not a requirement: working *inside* the vault always resolves by manifest walk-up with no config at all.
 
 ## Step 2: Create Vault Directory Structure
 
