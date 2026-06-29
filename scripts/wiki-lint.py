@@ -49,7 +49,9 @@ import yaml
 
 SCAFFOLDING = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md"}
 
-REQUIRED_FRONTMATTER = {"title", "category", "tags", "sources", "created", "updated"}
+# `sources` intentionally omitted: most pages here are self-authored and have no
+# external source, so requiring it produced noise instead of signal.
+REQUIRED_FRONTMATTER = {"title", "category", "tags", "created", "updated"}
 
 VALID_LIFECYCLES = {"draft", "reviewed", "living", "archived"}
 
@@ -235,6 +237,36 @@ def find_all_indexes(vault: pathlib.Path) -> list[pathlib.Path]:
     return out
 
 
+_BASE_FENCE_RE = re.compile(r"(?m)^\s*`{3,}\s*base\b")
+
+
+def index_base_dirs(vault: pathlib.Path) -> set[pathlib.Path]:
+    """Directories whose index.md embeds a ```base view (a dynamically generated
+    catalog). A content page under such a directory is considered catalogued by that
+    index, so it should not be flagged missing-from-index or orphaned just because the
+    listing is a live query instead of hand-written wikilinks."""
+    dirs: set[pathlib.Path] = set()
+    for idx in find_all_indexes(vault):
+        try:
+            text = idx.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        if _BASE_FENCE_RE.search(text):
+            dirs.add(idx.parent)
+    return dirs
+
+
+def covered_by_base_index(page: pathlib.Path, base_dirs: set[pathlib.Path]) -> bool:
+    """True if the page lives under a directory whose index.md is base-backed."""
+    for d in base_dirs:
+        try:
+            page.relative_to(d)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def load_private_paths(vault: pathlib.Path) -> list[str]:
     """Vault-relative path prefixes designated private, read from .manifest.json's
     `private_paths` key. Empty list (the default) makes the privacy check a no-op,
@@ -309,9 +341,11 @@ def check_broken_links_and_orphans(
                 if resolved in incoming:
                     incoming[resolved] += 1
 
-    # Orphan check
+    # Orphan check. A page catalogued by a base-backed index is reachable via that
+    # live query even though it has no hand-written inbound wikilink, so it is not orphaned.
+    base_dirs = index_base_dirs(vault)
     for page, count in incoming.items():
-        if count == 0:
+        if count == 0 and not covered_by_base_index(page, base_dirs):
             rel = str(page.relative_to(vault))
             findings_out.append(finding(
                 "warning", "orphaned_page", rel,
@@ -395,8 +429,9 @@ def check_index_consistency(
             if r is not None:
                 resolved_from_any_index.add(r)
 
+    base_dirs = index_base_dirs(vault)
     for page in content_pages:
-        if page not in resolved_from_any_index:
+        if page not in resolved_from_any_index and not covered_by_base_index(page, base_dirs):
             rel = str(page.relative_to(vault))
             out.append(finding(
                 "warning", "missing_from_index", rel,
@@ -416,19 +451,22 @@ def check_index_consistency(
     # Compare case-insensitively: index headings are conventionally Title Case
     # (e.g. "## AI") while folders are kebab-case-lowercase ("ai/"), so a case
     # difference is not a mismatch — only a genuinely different name is.
-    folders_ci = {f.lower() for f in top_level_folders}
-    meta_ci = {h.lower() for h in INDEX_META_HEADINGS}
-    lines = index_text.splitlines()
-    for lineno, line in enumerate(lines, 1):
-        m = re.match(r"^##\s+(.+)$", line)
-        if m:
-            heading = m.group(1).strip()
-            if heading.lower() not in folders_ci and heading.lower() not in meta_ci:
-                out.append(finding(
-                    "warning", "index_heading_mismatch", index_rel,
-                    f"index.md heading '## {heading}' doesn't match a top-level folder",
-                    lineno,
-                ))
+    # A base-backed root index groups pages by a live query rather than by folder, so its
+    # ## headings are editorial section titles, not folder names — skip the match check.
+    if not _BASE_FENCE_RE.search(index_text):
+        folders_ci = {f.lower() for f in top_level_folders}
+        meta_ci = {h.lower() for h in INDEX_META_HEADINGS}
+        lines = index_text.splitlines()
+        for lineno, line in enumerate(lines, 1):
+            m = re.match(r"^##\s+(.+)$", line)
+            if m:
+                heading = m.group(1).strip()
+                if heading.lower() not in folders_ci and heading.lower() not in meta_ci:
+                    out.append(finding(
+                        "warning", "index_heading_mismatch", index_rel,
+                        f"index.md heading '## {heading}' doesn't match a top-level folder",
+                        lineno,
+                    ))
 
     # (d) bare-basename wikilinks for pages not at vault root
     for lineno, target in index_links:
@@ -553,24 +591,9 @@ def check_stale_content(
                 f"stale by age ({age_days} days since last update)",
             ))
 
-        # Local sources mtime check
-        sources = fm.get("sources")
-        if not isinstance(sources, list):
-            continue
-        for src in sources:
-            if not isinstance(src, str):
-                continue
-            if src.startswith("http://") or src.startswith("https://"):
-                continue
-            src_path = vault / src
-            if not src_path.is_file():
-                continue
-            src_mtime = datetime.fromtimestamp(src_path.stat().st_mtime, timezone.utc).date()
-            if src_mtime > updated_date:
-                out.append(finding(
-                    "warning", "stale_source", rel,
-                    f"source '{src}' modified ({src_mtime}) after page updated ({updated_date})",
-                ))
+        # Local sources mtime check — DISABLED. A source file touched after the
+        # page's `updated` date is not reliable staleness signal here (re-saves,
+        # OneDrive mtime drift), so it produced false positives. Age check above stays.
 
     return out
 
@@ -1007,8 +1030,9 @@ def main() -> int:
     # Check 5: index consistency
     all_findings.extend(check_index_consistency(vault, content_pages, resolve))
 
-    # Check 6: hardcoded counts
-    all_findings.extend(check_hardcoded_counts(vault, content_pages))
+    # Check 6: hardcoded counts — DISABLED. The regex caught natural-language
+    # numbers (dates, ages, quantities) far more than real inventory tallies.
+    # all_findings.extend(check_hardcoded_counts(vault, content_pages))
 
     # Check 7: stale content
     all_findings.extend(check_stale_content(vault, content_pages))
