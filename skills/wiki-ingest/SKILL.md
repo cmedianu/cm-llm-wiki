@@ -141,7 +141,7 @@ For each page in your plan:
 - Add the new source to the `sources` list
 - Resolve any contradictions between old and new information (note them if unresolvable)
 
-**Write a `summary:` frontmatter field** on every new page (1–2 sentences, ≤200 characters) answering "what is this page about?" for a reader who hasn't opened it. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
+**Write a `summary:` frontmatter field** on every new page (1–2 sentences) answering "what is this page about?" for a reader who hasn't opened it. **HARD LIMIT — the summary MUST be under 200 characters.** Count the characters before you write the field; if it is 200 or more, cut it down until it fits (drop clauses, not meaning). `wiki-lint` fails any summary of 200+ chars, so an oversized summary is a guaranteed lint error — never emit one. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content and re-check the length. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
 
 **Add a `lifecycle` field** to every new page's frontmatter:
 
@@ -228,7 +228,7 @@ After ingesting, verify:
 - [ ] `log.md` has the ingest entry
 - [ ] Source attribution is present for every new claim
 - [ ] Inferred and ambiguous claims are marked with `^[inferred]` / `^[ambiguous]`
-- [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, ≤200 chars)
+- [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, **under 200 chars — count it; hard limit, `wiki-lint` fails 200+**)
 
 ## Reference
 
