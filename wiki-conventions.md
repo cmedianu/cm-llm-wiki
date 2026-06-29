@@ -31,6 +31,12 @@ that vault's own `CLAUDE.md`, not here.
   not bare basenames — some basenames are not globally unique.
 - **Categories mirror the vault's existing top-level folders**, not the llm-wiki default
   taxonomy (concepts/entities/skills). Match the folder a topic already lives in.
+- **Underscore-prefixed paths (`_*`) are not wiki content.** Any top-level (or nested) dir
+  whose name starts with `_` — e.g. `_raw` (ingest staging), `_bin` (tooling), `_strata-emails`
+  (a source archive) — is infrastructure/staging, not council content. The wiki scripts skip
+  both dotdirs (`.`) and `_`-dirs when walking the vault (`validate-frontmatter.py`,
+  `regen-manifest.py`, `wiki-graph.py`), so files there need no frontmatter and never appear
+  in indexes or the graph. Put scratch, source archives, and runnable tools under a `_`-dir.
 - **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages.
 - **No hardcoded inventory counts.** Don't write fixed tallies of pages, skills, scripts,
   sources, etc. into prose ("Catalog of all 65 pages", "the 12 skills", "28 abstracts") —

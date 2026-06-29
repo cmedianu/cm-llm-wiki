@@ -75,8 +75,8 @@ def main() -> int:
     invalid, missing, checked = [], [], 0
     for f in sorted(vault.rglob("*.md")):
         rel = f.relative_to(vault)
-        if any(part.startswith(".") for part in rel.parts):
-            continue  # skip dotdirs (.claude, .obsidian, ...)
+        if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
+            continue  # skip dotdirs (.claude, ...) and _-dirs (_raw, _bin, _strata-emails) — not wiki content
         checked += 1
         status, detail = check(f)
         if status == "OK":

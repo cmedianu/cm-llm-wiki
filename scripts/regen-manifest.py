@@ -54,8 +54,8 @@ def discover_sources():
     out = {}
     for p in sorted(VAULT.rglob("*.md")):
         rel = p.relative_to(VAULT).as_posix()
-        if any(part.startswith(".") for part in rel.split("/")):
-            continue
+        if any(part.startswith(".") or part.startswith("_") for part in rel.split("/")):
+            continue  # skip dotdirs and _-dirs (_raw, _bin, _strata-emails) — not wiki content
         if rel in SCAFFOLD:
             continue
         st = p.stat()
