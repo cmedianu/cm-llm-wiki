@@ -14,6 +14,8 @@ Checks performed:
   2. Broken wikilinks — wikilinks whose target does not resolve.
   3. Missing required frontmatter — title, category, tags, sources, created, updated.
   4. Summary field — missing or over 200 characters.
+  4b. Category mirrors folder — category that is neither the page's folder nor an
+      ancestor of it (drift that hides the page from its folder's base index).
   5. Index consistency — pages missing from index, bad section headings, etc.
   6. Hardcoded inventory counts — brittle "N pages/skills/…" phrases in prose.
   7. Stale content — source files modified after page's updated date; age > 90 days.
@@ -393,6 +395,44 @@ def check_frontmatter_fields(
             out.append(finding(
                 "warning", "oversized_summary", rel,
                 f"summary is {len(summary)} characters (max 200)",
+            ))
+    return out
+
+
+def check_category_folder_match(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+) -> list[dict]:
+    """Check: a page's `category` must mirror the folder it lives in.
+
+    The convention is 'categories mirror the folders'. A page's category should be
+    its folder path (posix, relative to the vault) — or an ancestor of it, so a
+    top-level category on a deeply-nested page (e.g. `ai` on `ai/future-of-the-firm/x`)
+    is allowed. A category that is neither the folder nor an ancestor (e.g. `recipes`
+    on a page in `cooking/`, `nasadmin` on `sysadmin/nas/`) is drift: it silently
+    hides the page from its folder's base-backed index. Warning, not error, because
+    the page still resolves — it just files itself under the wrong category.
+    Root-level pages (no folder) and pages without a `category` are skipped (the
+    latter is already reported by the missing-frontmatter check).
+    """
+    out = []
+    for page in content_pages:
+        rel = page.relative_to(vault).as_posix()
+        folder = str(pathlib.PurePosixPath(rel).parent)
+        if folder in (".", ""):
+            continue  # root-level page, no folder to mirror
+        fm = load_frontmatter(page)
+        if fm is None:
+            continue
+        category = fm.get("category")
+        if not isinstance(category, str) or not category:
+            continue  # missing/blank category is the missing_frontmatter check's job
+        if category != folder and not folder.startswith(category + "/"):
+            out.append(finding(
+                "warning", "category_folder_mismatch", rel,
+                f"category '{category}' does not mirror its folder '{folder}' "
+                f"(set category to '{folder}' or a parent path); as-is the page is "
+                f"hidden from the '{folder}' base index",
             ))
     return out
 
@@ -913,6 +953,7 @@ _CATEGORY_SECTION = {
     "missing_frontmatter": "Missing Required Frontmatter",
     "missing_summary": "Missing Summary",
     "oversized_summary": "Oversized Summary",
+    "category_folder_mismatch": "Category Does Not Mirror Folder",
     "missing_from_index": "Missing from Index",
     "index_heading_mismatch": "Index Heading Mismatches",
     "index_bare_basename": "Index Bare-Basename Wikilinks",
@@ -1026,6 +1067,9 @@ def main() -> int:
 
     # Check 3 + 4: frontmatter fields and summary
     all_findings.extend(check_frontmatter_fields(vault, content_pages))
+
+    # Check 4b: category mirrors the folder (else the page hides from its folder base)
+    all_findings.extend(check_category_folder_match(vault, content_pages))
 
     # Check 5: index consistency
     all_findings.extend(check_index_consistency(vault, content_pages, resolve))
