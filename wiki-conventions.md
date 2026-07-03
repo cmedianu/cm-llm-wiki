@@ -30,7 +30,12 @@ that vault's own `CLAUDE.md`, not here.
 - **Wikilinks:** use full **vault-relative paths** (e.g. `[[folder/subfolder/page-name]]`),
   not bare basenames — some basenames are not globally unique.
 - **Categories mirror the vault's existing top-level folders**, not the llm-wiki default
-  taxonomy (concepts/entities/skills). Match the folder a topic already lives in.
+  taxonomy (concepts/entities/skills). Match the folder a topic already lives in. The
+  **folders are authoritative**: don't hand-maintain a category roster (in `CLAUDE.md` or
+  anywhere), enumerate categories by listing the folders. A page's `category` must equal its
+  folder path (or an ancestor of it). `wiki-lint.py` enforces this (`category_folder_mismatch`),
+  because a category that does not mirror the folder silently hides the page from that
+  folder's base-backed index.
 - **Underscore-prefixed paths (`_*`) are not wiki content.** Any top-level (or nested) dir
   whose name starts with `_` — e.g. `_raw` (ingest staging), `_bin` (tooling), `_strata-emails`
   (a source archive) — is infrastructure/staging, not council content. The wiki scripts skip
@@ -38,6 +43,16 @@ that vault's own `CLAUDE.md`, not here.
   `regen-manifest.py`, `wiki-graph.py`), so files there need no frontmatter and never appear
   in indexes or the graph. Put scratch, source archives, and runnable tools under a `_`-dir.
 - **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages.
+- **Folder indexes can be base-backed** (Obsidian Bases). A folder's `index.md` can describe the
+  category (a one-line `summary:` in its frontmatter) and list its pages with a live **base**
+  block instead of a hand-maintained bullet list, so adding or renaming a page needs no index
+  edit. Scope the base to the folder's category (`category == "<folder>"` **or**
+  `category.startsWith("<folder>/")`), show `file.name` + `summary` + `updated`, sort
+  `file.mtime` `DESC` (newest first), and exclude the index page itself with
+  `file.name != "index"`. Curated indexes can be **hybrid**: keep the hand-written intro and
+  put the base below it. `wiki-lint.py` counts base-covered pages as indexed, so they are not
+  flagged as orphans or missing-from-index. Note bases render only inside Obsidian; an agent
+  reading the raw `.md` sees the base source, not the rows (it should `ls`/read files instead).
 - **No hardcoded inventory counts.** Don't write fixed tallies of pages, skills, scripts,
   sources, etc. into prose ("Catalog of all 65 pages", "the 12 skills", "28 abstracts") —
   they go stale the moment anything is added or removed, and nothing keeps them honest.
