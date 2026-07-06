@@ -100,7 +100,7 @@ into `_insights.md`. Needs `pyyaml`.
 ## `wiki-journal.py`
 
 ```sh
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'INGEST source="path/to/src" pages_updated=1 pages_created=0 mode=append' \
   --hot-entry '**One-line conceptual change.** Detail with [[wikilinks]].' \
   --hot-trim 3

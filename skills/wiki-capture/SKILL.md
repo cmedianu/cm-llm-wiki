@@ -198,7 +198,7 @@ Every note must link to at least 2 existing wiki pages. Search `index.md` before
 **`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line; the script owns the timestamped log append, `hot.md` prepend/trim, and `updated:` bump:
 
 ```bash
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'CAPTURE type=<type> page="<path>" title="<title>"' \
   --hot-entry '**One-line summary of what was captured.** Detail with [[wikilinks]].' \
   --hot-trim 3

@@ -175,7 +175,7 @@ Add entries for any new pages created.
 Drive both with `wiki-journal.py` — don't hand-edit. You compose the distilled Recent-Activity line (write it *conceptually*, e.g. "Synced obsidian-wiki — added wiki-capture and wiki-research skills; core new capabilities are autonomous web research and conversation capture"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
 ```bash
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'WIKI_UPDATE project=<project-name> pages_updated=X pages_created=Y source_cwd=/path/to/project' \
   --hot-entry '**One-line conceptual summary of what was synced.**' \
   --hot-trim 3

@@ -227,7 +227,7 @@ owns the plumbing: timestamped log append, prepending the entry, trimming to the
 `updated:` bump, and creating `hot.md` from template if missing. One call does both files:
 
 ```bash
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'INGEST source="path/to/source" pages_updated=N pages_created=M mode=append' \
   --hot-entry '**One-line conceptual change.** Detail with [[wikilinks]].' \
   --hot-trim 3

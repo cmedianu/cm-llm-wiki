@@ -141,7 +141,7 @@ Present a summary:
 Drive `log.md` and `hot.md` with `wiki-journal.py` — don't hand-edit. You compose the distilled Recent-Activity line (e.g. "Cross-linked 23 mentions across 12 pages; 2 orphans remain"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
 ```bash
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'CROSS_LINK pages_scanned=N links_added=M pages_modified=P orphans_remaining=Q' \
   --hot-entry '**One-line summary of what was cross-linked.**' \
   --hot-trim 3

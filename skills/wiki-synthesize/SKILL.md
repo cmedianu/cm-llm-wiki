@@ -138,7 +138,7 @@ Skipped (consider next time):
 **`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line (e.g. "Synthesized 5 cross-cutting pages: Caching × Consistency, Testing × Observability, …"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
 ```bash
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'WIKI_SYNTHESIZE pages_scanned=N synthesis_created=M candidates_skipped=K' \
   --hot-entry '**One-line summary of what was synthesized.**' \
   --hot-trim 3

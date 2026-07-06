@@ -180,7 +180,7 @@ Check `index.md` for existing pages on the same topics — merge into existing p
 **`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line (the research topic and its core finding); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
 ```bash
-uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'WIKI_RESEARCH topic="<topic>" rounds=N sources_fetched=N pages_created=M' \
   --hot-entry '**Researched <topic> — core finding in one line.**' \
   --hot-trim 3
