@@ -135,12 +135,16 @@ Skipped (consider next time):
 
 **`index.md`** — Add entries for all new synthesis pages.
 
-**`log.md`** — Append:
-```
-- [TIMESTAMP] WIKI_SYNTHESIZE pages_scanned=N synthesis_created=M candidates_skipped=K
+**`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line (e.g. "Synthesized 5 cross-cutting pages: Caching × Consistency, Testing × Observability, …"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
+
+```bash
+uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'WIKI_SYNTHESIZE pages_scanned=N synthesis_created=M candidates_skipped=K' \
+  --hot-entry '**One-line summary of what was synthesized.**' \
+  --hot-trim 3
 ```
 
-**`hot.md`** — Read `$OBSIDIAN_VAULT_PATH/hot.md` (create from the template in `wiki-ingest` if missing). Update **Recent Activity** with what was synthesized — e.g. "Synthesized 5 cross-cutting pages: Caching × Consistency, Testing × Observability, …". Update **Active Threads** with any open questions the synthesis surfaced. Update `updated` timestamp.
+**Active Threads** is semantic — the script won't touch it; edit it by hand with Edit to record any open questions the synthesis surfaced.
 
 ## Quality Checklist
 

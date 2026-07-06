@@ -321,13 +321,16 @@ Also update the `projects` section of the manifest:
 
 ### Create journal entry + update special files
 
-Update `index.md` and `log.md` per the standard process:
+Update `index.md` for new pages. Drive `log.md` and `hot.md` with `wiki-journal.py` — don't hand-edit. You compose the distilled Recent-Activity line (e.g. "Ingested 5 Claude conversations across 2 projects; surfaced patterns in API design and testing strategy"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
-```
-- [TIMESTAMP] CLAUDE_HISTORY_INGEST projects=N conversations=M desktop_sessions=D audit_logs=A pages_updated=X pages_created=Y mode=append|full
+```bash
+uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'CLAUDE_HISTORY_INGEST projects=N conversations=M desktop_sessions=D audit_logs=A pages_updated=X pages_created=Y mode=append|full' \
+  --hot-entry '**One-line summary of what was ingested.**' \
+  --hot-trim 3
 ```
 
-**`hot.md`** — Read `$OBSIDIAN_VAULT_PATH/hot.md` (create from the template in `wiki-ingest` if missing). Update **Recent Activity** with a one-line summary — e.g. "Ingested 5 Claude conversations across 2 projects; surfaced patterns in API design and testing strategy." Keep the last 3 operations. Update **Active Threads** if any ongoing project is now better understood. Update `updated` timestamp.
+**Active Threads** is semantic — the script won't touch it; edit it by hand with Edit if any ongoing project is now better understood.
 
 ## Privacy
 

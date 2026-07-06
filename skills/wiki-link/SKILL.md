@@ -138,12 +138,14 @@ Present a summary:
 
 ## Step 6: Update Log and Hot Cache
 
-Append to `log.md`:
-```
-- [TIMESTAMP] CROSS_LINK pages_scanned=N links_added=M pages_modified=P orphans_remaining=Q
-```
+Drive `log.md` and `hot.md` with `wiki-journal.py` — don't hand-edit. You compose the distilled Recent-Activity line (e.g. "Cross-linked 23 mentions across 12 pages; 2 orphans remain"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
-**`hot.md`** — Read `$OBSIDIAN_VAULT_PATH/hot.md` (create from the template in `wiki-ingest` if missing). Update **Recent Activity** with a one-line summary of what was linked — e.g. "Cross-linked 23 mentions across 12 pages; 2 orphans remain." Keep the last 3 operations. Update `updated` timestamp.
+```bash
+uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'CROSS_LINK pages_scanned=N links_added=M pages_modified=P orphans_remaining=Q' \
+  --hot-entry '**One-line summary of what was cross-linked.**' \
+  --hot-trim 3
+```
 
 ## Tips
 

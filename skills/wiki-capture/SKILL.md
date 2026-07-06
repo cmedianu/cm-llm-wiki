@@ -195,12 +195,16 @@ Every note must link to at least 2 existing wiki pages. Search `index.md` before
 
 **`index.md`** — Add the new page under its category section.
 
-**`log.md`** — Append:
-```
-- [TIMESTAMP] CAPTURE type=<type> page="<path>" title="<title>"
+**`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line; the script owns the timestamped log append, `hot.md` prepend/trim, and `updated:` bump:
+
+```bash
+uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'CAPTURE type=<type> page="<path>" title="<title>"' \
+  --hot-entry '**One-line summary of what was captured.** Detail with [[wikilinks]].' \
+  --hot-trim 3
 ```
 
-**`hot.md`** — Update **Recent Activity** with what was just captured. Update **Key Takeaways** if the note introduced something worth flagging. Update `updated` timestamp.
+**Key Takeaways** is semantic — the script won't touch it; edit it by hand with Edit if the note flagged something worth surfacing.
 
 ## Step 7: Confirm to User
 
