@@ -57,7 +57,7 @@ import yaml
 # ---------------------------------------------------------------------------
 # Scaffold / meta exclusions — same set as validate-frontmatter.py
 # ---------------------------------------------------------------------------
-SCAFFOLD_BASENAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md"}
+SCAFFOLD_BASENAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
 
 # ---------------------------------------------------------------------------
 # Vault discovery — identical logic to validate-frontmatter.py

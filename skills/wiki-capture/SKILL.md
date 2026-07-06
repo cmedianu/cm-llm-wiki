@@ -67,6 +67,14 @@ Apply provenance markers per `wiki`:
 - *Inferred* — generalized or synthesized from the conversation → `^[inferred]`
 - *Ambiguous* — disputed, uncertain, or contradictory → `^[ambiguous]`
 
+**Be concise.** Distil, don't pad. Prefer tight bullets over prose paragraphs; cut hedging,
+restatement, and throat-clearing. Every sentence must carry a fact the reader can't infer from the
+others. A dense one-screen page beats a thorough three-screen one — if it can be said in a clause,
+don't spend a sentence; if a section is empty, omit it rather than filling it. Concision is
+*density* (no filler per fact), not low *coverage* (dropping facts worth keeping): capture the
+high-signal knowledge, but say each thing once and tightly. Length is an emergent result of how much
+signal the conversation held, never a target to hit or pad toward.
+
 ## Step 4: Generate a Slug and Title
 
 Derive a clear, descriptive title from the content. Slugify it:
@@ -85,7 +93,7 @@ title: >-
 category: <synthesis|concepts|references|journal|skills>
 tags: [<2-5 domain tags from taxonomy>]
 sources:
-  - conversation:<ISO-date>
+  - conversation:<project>/<ISO-date>
 created: <ISO-8601 timestamp>
 updated: <ISO-8601 timestamp>
 summary: >-
@@ -94,6 +102,10 @@ lifecycle: draft
 lifecycle_changed: <ISO date today>
 ---
 ```
+
+`<project>` in the source is the basename of the project directory the capture was run from (the
+current working directory's name, e.g. `ObsidianVault`), so provenance records *where* the
+conversation happened, not just when. Result: `conversation:ObsidianVault/2026-07-04`.
 
 Body structure by type:
 

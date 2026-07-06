@@ -36,7 +36,7 @@ One pass performs every mechanical check, reproducibly:
 - **Provenance marker ratios** — `^[inferred]` / `^[ambiguous]` density per page, with flags (speculation-heavy, unsourced-synthesis, hub-with-high-inferred)
 - **Misc promotion candidates** — `misc/` pages whose links lean heavily into one project (computed on demand — no score is stored on pages)
 
-Read its report. **Exit code 1** means at least one error-level finding (broken links, missing frontmatter, bad lifecycle/supersession). Use `--format json` if you want to post-process the findings. (No `uv` available? The script also runs as `python3 .claude/wiki-scripts/wiki-lint.py` once `pyyaml` is installed — `pip install pyyaml`.)
+Read its report. **Exit code 1** means at least one error-level finding (broken links, missing frontmatter, bad lifecycle/supersession). Use `--format json` if you want to post-process the findings. (Requires `uv`; the PEP 723 header supplies `pyyaml` automatically. Never fall back to a bare `python3`.)
 
 For graph-shaped questions the linter doesn't cover — **tag-cluster cohesion**, hubs, bridges — run `uv run .claude/wiki-scripts/wiki-graph.py` (see `wiki-status` insights mode). For **synthesis gaps**, run `/wiki-synthesize`.
 

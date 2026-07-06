@@ -6,43 +6,34 @@
 """PostToolUse hook: stamp `updated: <yyyy-MM-dd>` on edited wiki pages.
 
 Lives in the cm-llm-wiki master repo; symlinked into a vault at `.claude/hooks/`
-(like `skills` and `wiki-scripts`). It is opt-in *per vault* — only vaults that
-register it in their own `.claude/settings.json` (PostToolUse, matcher
-`Edit|Write|MultiEdit`) run it, so it can be scoped to a single vault.
+(like `wiki-scripts` and `wiki-conventions.md`). One script serves the three
+supported agents; their PostToolUse stdin payloads are near-identical by design:
+
+- **Claude Code**: registered in the VAULT's `.claude/settings.json` (NOT the
+  global `~/.claude/settings.json`; keeping it in the vault is what scopes it to
+  that vault), matcher `Edit|Write|MultiEdit`. `wire-vault.sh` seeds this file.
+  Edited path arrives as `tool_input.file_path`.
+- **Copilot CLI**: registered via the vault's `.github/hooks` (symlinked to this
+  repo's `hooks/copilot/`). Uses the PascalCase/Claude-compatible event format, so
+  the payload matches Claude's shape.
+- **Codex CLI**: registered via the vault's generated `.codex/hooks.json`
+  (written by `wire-vault.sh`; run `/hooks` in Codex once per vault to trust it).
+  Codex edits files through `apply_patch`, whose input is a patch envelope, so
+  the edited paths are parsed out of `*** Update|Add File:` lines.
 
 Design:
 - Complements the Obsidian "Update time on edit" plugin, which stamps edits made
-  *in the app*. This covers edits made by the agent on disk. Both write the same
+  *in the app*. This covers edits made by an agent on disk. Both write the same
   `updated: yyyy-MM-dd` field in the same format, so same-day writes are
-  byte-identical (idempotent) and the two mechanisms never fight.
+  byte-identical (idempotent) and the mechanisms never fight.
 - Deliberately does NOT touch the plugin's `fileHashMap` cache: that file is
   owned by Obsidian and lives in the (often cloud-synced) `.obsidian/`, so a
   second writer would risk sync-conflict corruption. Same-day idempotency makes
   it unnecessary.
 - Never blocks the tool: any error exits 0 silently.
-
-Wiring (per vault — this is what makes it opt-in / single-vault):
-  1. Symlink this dir into the vault, alongside skills + wiki-scripts:
-        ln -s /path/to/cm-llm-wiki/hooks  <vault>/.claude/hooks
-  2. Register it in the VAULT's own .claude/settings.json (NOT the global
-     ~/.claude/settings.json — keeping it here is what scopes it to one vault):
-        {
-          "hooks": {
-            "PostToolUse": [
-              {
-                "matcher": "Edit|Write|MultiEdit",
-                "hooks": [
-                  {
-                    "type": "command",
-                    "command": "uv run --script \"$CLAUDE_PROJECT_DIR/.claude/hooks/update-timestamp.py\""
-                  }
-                ]
-              }
-            ]
-          }
-        }
-  $CLAUDE_PROJECT_DIR is set by Claude Code to the vault root; the script also
-  uses it to ignore any edited file that lives outside the vault.
+- Scoping: only files inside the vault are touched. The vault root comes from
+  `$CLAUDE_PROJECT_DIR` (Claude) or the payload's `cwd` (Codex/Copilot both
+  include it), which also anchors the relative paths in Codex patches.
 """
 import sys
 import os
@@ -54,30 +45,45 @@ import pathlib
 # Non-page files (kept in sync with the wiki skills' allow-list).
 SKIP_NAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md",
               "AGENTS.md", "_insights.md"}
-SKIP_DIR_PARTS = {"_sources", ".obsidian", ".claude", ".git", ".trash"}
+SKIP_DIR_PARTS = {"_sources", ".obsidian", ".claude", ".codex", ".github",
+                  ".git", ".trash"}
+
+# Codex `apply_patch` envelope: one line per touched file.
+PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add) File: (.+?)\s*$", re.MULTILINE)
 
 
-def run():
-    raw = sys.stdin.read()
-    data = json.loads(raw) if raw.strip() else {}
-    tool_input = data.get("tool_input", {}) or {}
-    fp = tool_input.get("file_path") or tool_input.get("path")
-    if not fp:
-        return
+def candidate_paths(data: dict) -> list[str]:
+    """Edited file paths from a Claude-, Copilot-, or Codex-shaped payload."""
+    tool_input = data.get("tool_input") or data.get("toolArgs") or {}
+    if not isinstance(tool_input, dict):
+        return []
+    for key in ("file_path", "filePath", "path"):
+        fp = tool_input.get(key)
+        if isinstance(fp, str) and fp:
+            return [fp]
+    # Codex apply_patch: scan string values for the patch envelope.
+    found = []
+    for v in tool_input.values():
+        if isinstance(v, str) and "*** " in v:
+            found.extend(PATCH_FILE_RE.findall(v))
+    return found
 
+
+def stamp(fp: str, root: pathlib.Path | None):
     path = pathlib.Path(fp)
     if path.suffix != ".md":
         return
+    if not path.is_absolute() and root is not None:
+        path = root / path  # Codex patch paths are relative to the session cwd
     try:
         abspath = path.resolve()
     except Exception:
         return
 
     # Scope to the vault that registered the hook.
-    proj = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd")
-    if proj:
+    if root is not None:
         try:
-            abspath.relative_to(pathlib.Path(proj).resolve())
+            abspath.relative_to(root.resolve())
         except ValueError:
             return  # edited file is outside this vault
 
@@ -124,6 +130,18 @@ def run():
     new_text = text[:m.start(1)] + "\n".join(out) + text[m.end(1):]
     if new_text != text:
         abspath.write_text(new_text, encoding="utf-8")
+
+
+def run():
+    raw = sys.stdin.read()
+    data = json.loads(raw) if raw.strip() else {}
+    proj = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd")
+    root = pathlib.Path(proj) if proj else None
+    for fp in candidate_paths(data):
+        try:
+            stamp(fp, root)
+        except Exception:
+            pass  # one bad path must not stop the others
 
 
 if __name__ == "__main__":

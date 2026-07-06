@@ -4,17 +4,16 @@ Five-minute tour. Clone, wire one vault, run your first three commands.
 
 ## What you get
 
-- Claude Code skills implementing Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) for Obsidian — distill raw sources into a compounding wiki, query it, keep it tidy.
-- Python utilities: `wiki-lint.py` and `wiki-graph.py` — the deterministic backends behind the `wiki-lint` and `wiki-status` insights skills — plus gap-fillers the skills don't cover (rebuild manifest, mass kebab-case rename, validate frontmatter). The three that parse YAML (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`) are `uv` scripts that auto-install `pyyaml`; `regen-manifest.py` and `kebab-rename.py` are stdlib-only.
+- Agent skills implementing Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) for Obsidian — distill raw sources into a compounding wiki, query it, keep it tidy. They use the [Agent Skills](https://agentskills.io/) SKILL.md standard, so the same install works in **Claude Code, Codex CLI, and Copilot CLI** (see [Other agents](#other-agents-codex-cli--copilot-cli)).
+- Python utilities: `wiki-lint.py` and `wiki-graph.py` — the deterministic backends behind the `wiki-lint` and `wiki-status` insights skills — plus gap-fillers the skills don't cover (rebuild manifest, mass kebab-case rename, validate frontmatter, sync AGENTS.md). All are PEP 723 `uv` scripts: run with `uv run`, dependencies handled automatically.
 
 ## Prerequisites
 
-**For most skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work. The exceptions are `wiki-lint` and `wiki-status` insights, which call the Python analysis scripts below; everything else (ingest, query, link, capture, synthesize, …) is pure Claude Code.
+**For most skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work. The exceptions are `wiki-lint` and `wiki-status` insights, which call the Python analysis scripts below; everything else (ingest, query, link, capture, synthesize, …) is pure Claude Code. (Codex CLI and Copilot CLI work too — wire with the same steps, then see [Other agents](#other-agents-codex-cli--copilot-cli). The link method's AGENTS.md generation needs `uv`.)
 
-**If you run the Python scripts** (the `wiki-lint` / `wiki-status`-insights backends, plus rebuild-manifest / mass-rename / validate-frontmatter):
+**If you run the Python scripts** (the `wiki-lint` / `wiki-status`-insights backends, plus rebuild-manifest / mass-rename / validate-frontmatter / sync-agents):
 
-- Python in `PATH` — invoked as `python3` on macOS/Linux, `python` or the `py` launcher on native Windows. `regen-manifest.py` and `kebab-rename.py` run on any 3.x; `wiki-lint.py` and `wiki-graph.py` need **3.10+**.
-- [`uv`](https://docs.astral.sh/uv/) (all platforms) — the simplest way to run the YAML-parsing scripts (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`): `uv run` auto-installs `pyyaml`, nothing else to set up. Without `uv`, run them with `python3` after a one-time `pip install pyyaml`. `regen-manifest.py` and `kebab-rename.py` are stdlib-only and need neither.
+- [`uv`](https://docs.astral.sh/uv/) (all platforms) — every script is a PEP 723 `uv` script; run them all as `uv run <script>` and `uv` supplies the interpreter and any dependency (`pyyaml` for the YAML-parsing ones) automatically. No separate Python install to manage, same command on every OS. The `wire-vault` scripts also call `uv` to generate `AGENTS.md`.
 
 ## Wire one vault
 
@@ -52,7 +51,7 @@ The two directory links use **junctions** (no admin, no Developer Mode). The sin
 
 > **Don't link a cloud-synced vault.** If the vault lives under OneDrive/Dropbox/Google Drive, use the copy method above instead — cloud sync silently breaks junctions and symlinks. Details in [Common gotchas](#common-gotchas).
 
-That creates the three `.claude` links (`skills`, `wiki-scripts`, `wiki-conventions.md`) and seeds a `CLAUDE.md` that imports the shared conventions. Open it and fill in the "This vault's specifics" section (folder taxonomy, private areas, special namespaces).
+That creates the `.claude` links (`wiki-scripts`, `wiki-conventions.md`, `hooks`) plus `.github/hooks` (Copilot's hook config), seeds a `CLAUDE.md` that imports the shared conventions, generates `AGENTS.md` from it for Codex/Copilot, generates `.codex/hooks.json`, and seeds `.claude/settings.json` with the update-timestamp hook. Open `CLAUDE.md` and fill in the "This vault's specifics" section (folder taxonomy, private areas, special namespaces), then re-run the wire script (or `scripts/sync-agents.py`) so `AGENTS.md` picks the changes up. Don't forget the user-level step too, once per machine: `wire-vault.sh --user` (`.ps1 -User`) links every skill into `~/.claude/skills/` and `~/.agents/skills/`.
 
 The vault is the directory containing `.manifest.json`; skills find the active vault by walking up from your shell's CWD for it, so `cd /path/to/your/vault && claude` puts you in that vault's context — no global flag. If the vault has no `.manifest.json` yet, create it with `wiki-setup` (see below).
 
@@ -74,7 +73,7 @@ Then say these in plain English. The skills auto-load based on what you ask.
 Triggers `wiki-status`. Reports how many sources are ingested, what's pending, whether to append or rebuild next.
 
 If the vault is fresh → run `wiki-setup` first ("set up my wiki").
-If the vault already has notes but no `.manifest.json` → run `scripts/regen-manifest.py` from the vault root to bootstrap it (`python3 regen-manifest.py`; on Windows `python regen-manifest.py`).
+If the vault already has notes but no `.manifest.json` → run `scripts/regen-manifest.py` from the vault root to bootstrap it (`uv run .claude/wiki-scripts/regen-manifest.py`, same command on Windows).
 
 ### 2. Add a source
 
@@ -106,9 +105,27 @@ For cheap lookups: phrase it as "quick answer: ..." and it'll read only `summary
 | Start fresh | "rebuild the wiki" | `wiki-rebuild` |
 | Switch between vaults | "/wiki-switch work" | `wiki-switch` |
 
-> **Heads-up:** `wiki-lint` ("audit my wiki") and `wiki-status` insights ("show me the hubs") run the Python analysis scripts (`wiki-lint.py` / `wiki-graph.py`), so they need `uv` (or `python3` + `pyyaml`) — see [Prerequisites](#prerequisites). Every other skill needs nothing but Claude Code.
+> **Heads-up:** `wiki-lint` ("audit my wiki") and `wiki-status` insights ("show me the hubs") run the Python analysis scripts (`wiki-lint.py` / `wiki-graph.py`), so they need `uv` — see [Prerequisites](#prerequisites). Every other skill needs nothing but Claude Code.
 
 Every skill's `description:` field (top of each `SKILL.md`) lists the exact phrases that trigger it. If you forget what to say, browse those.
+
+## Other agents (Codex CLI / Copilot CLI)
+
+The wiring above already serves both; nothing extra to install. What differs from Claude Code:
+
+- **Skills** load from `~/.agents/skills/` (linked by the `--user` step). Invoke explicitly
+  with `$wiki-status` in Codex or `/wiki-status` in Copilot, or just ask in plain English
+  and let the description-based auto-selection pick the skill, same as Claude.
+- **Instructions** come from the generated `AGENTS.md` (Codex has no `@`-import, so the
+  shared conventions are inlined). Edit `CLAUDE.md`, never `AGENTS.md`; re-run
+  `wire-vault.sh <vault>` or `sync-agents.py --all` after changes.
+- **One-time, per vault, in Codex:** trust the folder when prompted on first launch, and
+  run `/hooks` once to trust `.codex/hooks.json` (the update-timestamp hook). Copilot
+  picks its hook up from `.github/hooks` and prompts inline.
+- The copy method works for them too: put the `skills` folders in `.agents/skills/` at the
+  vault root (Codex and Copilot both read it; Copilot also reads `.claude/skills/`), and
+  paste the conventions into an `AGENTS.md` by hand since there is no import to resolve.
+- `wiki-claude-history` mines `~/.claude` session data and only makes sense in Claude Code.
 
 ## Multi-vault
 
@@ -127,7 +144,7 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 **Mass-rename, broken wikilinks.** `scripts/kebab-rename.py` does file rename + wikilink rewrite + manifest re-key in lockstep. Adapt `FOLDER_RENAMES` / `BRAND_PRESERVATIONS` / `PATH_OVERRIDES` for your own conventions before running.
 
-**Windows links.** Native Windows (`wire-vault.ps1`) links the two directories with **junctions**, which every Windows tool — Claude Code, Obsidian, Python — follows transparently. The single `wiki-conventions.md` is a real symlink where possible, else a **copy**; if it fell back to a copy, repo-side edits to `wiki-conventions.md` won't reach the vault until you re-run `wire-vault.ps1` (enable Developer Mode for a live link). Obsidian ignores `.claude/` either way.
+**Windows links.** Native Windows (`wire-vault.ps1`) links the directories with **junctions**, which every Windows tool — Claude Code, Obsidian, Python — follows transparently. The single `wiki-conventions.md` is a real symlink where possible, else a **copy**; if it fell back to a copy, repo-side edits to `wiki-conventions.md` won't reach the vault until you re-run `wire-vault.ps1` (enable Developer Mode for a live link). Obsidian ignores `.claude/` either way.
 
 **Cloud-synced vaults break links (OneDrive / Dropbox / Google Drive).** These sync engines don't understand reparse points. A junction or symlink placed inside a synced folder gets flattened to a 0-byte stub on the Windows side — Explorer shows it as a 0 KB *File* (not a folder), with a perpetual "syncing" icon, and Obsidian/Claude-on-Windows can't traverse it. Verified: `wire-vault.ps1` into a OneDrive vault yields 0 KB stubs, while the identical command into a non-synced path like `C:\TEMP\testVault` yields working `<JUNCTION>`s. Resolutions, in order of preference:
 

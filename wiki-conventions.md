@@ -9,6 +9,18 @@ This file lives in the **`cm-llm-wiki` master repo** and is symlinked into each 
 true of only one vault (its folder taxonomy, special namespaces, private areas) belongs in
 that vault's own `CLAUDE.md`, not here.
 
+The tooling serves **Claude Code, Codex CLI, and Copilot CLI** from this one copy.
+Claude Code (and Copilot) resolve the `@`-import live; Codex has no import mechanism,
+so each vault also carries a **generated `AGENTS.md`**: `CLAUDE.md` with these
+conventions inlined by `sync-agents.py`. Two consequences, whichever agent you are:
+
+- **Never edit `AGENTS.md`.** It is a build artifact. Change `CLAUDE.md` (vault
+  specifics) or this file (shared rules), then re-run `wire-vault` / `sync-agents.py`.
+- **Stamp `updated: <yyyy-MM-dd>` in the frontmatter of every page you edit.** All
+  three agents have a PostToolUse hook wired to do this automatically
+  (`hooks/update-timestamp.py`; same-day re-stamps are no-ops), but if your hook
+  isn't active (Codex needs a one-time `/hooks` trust per vault), set it yourself.
+
 **Route work through the skills — do not hand-edit pages ad hoc.** Adding knowledge →
 `wiki-ingest` / `wiki-capture`. Answering questions → `wiki-query`. Cross-linking →
 `wiki-link`. Health/cleanup → `wiki-lint`. The skills enforce the conventions below.

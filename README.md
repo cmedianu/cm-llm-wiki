@@ -2,8 +2,13 @@
 
 An implementation of Andrej Karpathy's
 [LLM Wiki gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-for Obsidian — a family of Claude Code skills plus maintenance scripts, extracted from
-an Obsidian vault so multiple vaults can share one canonical copy.
+for Obsidian — a family of agent skills plus maintenance scripts, extracted from
+an Obsidian vault so multiple vaults can share one canonical copy. One install
+serves **Claude Code, Codex CLI, and Copilot CLI**: the skills follow the
+[Agent Skills](https://agentskills.io/) open standard all three read, the
+instructions ship as both `CLAUDE.md` (live import) and a generated
+[`AGENTS.md`](https://agents.md/), and the update-timestamp hook plugs into each
+tool's own hook system. See **Multi-agent support** below.
 
 It began as a fork of [Ar9av/obsidian-wiki](https://github.com/Ar9av/obsidian-wiki), but
 has diverged so far since — skills rewritten and renamed, most of them trimmed away, the
@@ -19,18 +24,22 @@ code still resembles the original.
 ## Layout
 
 ```
-skills/              Claude Code skills — the schema layer of the wiki pattern
-scripts/             Python maintenance + analysis scripts (wiki-lint, wiki-graph, kebab-rename, regen-manifest, validate-frontmatter)
-wiki-conventions.md  Shared CLAUDE.md conventions, @-imported by every vault
+skills/              Agent skills (SKILL.md format) — the schema layer of the wiki pattern
+scripts/             Python maintenance + analysis scripts (wiki-lint, wiki-graph, kebab-rename, regen-manifest, validate-frontmatter, sync-agents)
+hooks/               update-timestamp PostToolUse hook (one script, three agents) + Copilot hook config
+wiki-conventions.md  Shared conventions, @-imported by every vault's CLAUDE.md and inlined into its generated AGENTS.md
 ```
 
 The tooling installs in **two layers**, so an edit in the repo takes effect everywhere immediately:
 
 - **Skills, once per machine at user level.** Each `wiki-*` skill is symlinked into
-  `~/.claude/skills/`, so the `/wiki-*` commands work in *every* project, wiki or not.
+  `~/.claude/skills/` (Claude Code) and `~/.agents/skills/` (the cross-agent standard
+  location Codex and Copilot read), so the wiki skills work in *every* project, wiki or not.
 - **Per vault, only the vault-relative tooling.** Each vault symlinks
   `<vault>/.claude/wiki-scripts` (to `scripts/`), `<vault>/.claude/wiki-conventions.md`,
-  and `<vault>/.claude/hooks`. Skills are **not** linked per-vault anymore.
+  `<vault>/.claude/hooks`, and `<vault>/.github/hooks` (Copilot), plus three generated
+  files that cannot be symlinks: `AGENTS.md`, `.codex/hooks.json`, and a seeded
+  `.claude/settings.json`. Skills are **not** linked per-vault anymore.
 
 Skills run from anywhere; the active vault is resolved at run time (manifest walk-up, then a
 project map, then a quiz). See **Choosing a vault** below.
@@ -46,7 +55,7 @@ exit 0 = fully wired).
 ./wire-vault.sh --user
 ```
 
-**2. Wire each vault's tooling** (no skills; scripts, conventions, hooks):
+**2. Wire each vault's tooling** (no skills; scripts, conventions, hooks, AGENTS.md):
 
 ```sh
 ./wire-vault.sh /path/to/your/vault
@@ -59,12 +68,17 @@ On **native Windows** (PowerShell, no WSL) use the `.ps1` port, same flags, same
 .\wire-vault.ps1 C:\path\to\your\vault      # step 2  (-Check to diagnose without changing anything)
 ```
 
-`--user` symlinks every `wiki-*` skill into `~/.claude/skills/`. The per-vault run creates the
-three `.claude` symlinks (`wiki-scripts`, `wiki-conventions.md`, `hooks`), seeds a `CLAUDE.md`
-from the template **only if one isn't already there**, and flags a stray `wiki-*` under
-`.claude/skills` left over from the old per-vault model. Re-run either any time to repair links,
-e.g. after moving a vault or cloning the repo to a new path (the `.sh` even converts a stale real
-copy back into a symlink). `wire-vault.ps1` links directories with junctions and
+`--user` symlinks every `wiki-*` skill into `~/.claude/skills/` and `~/.agents/skills/`.
+The per-vault run creates the three `.claude` symlinks (`wiki-scripts`,
+`wiki-conventions.md`, `hooks`) plus `.github/hooks` (Copilot's hook config), seeds a
+`CLAUDE.md` from the template **only if one isn't already there**, generates `AGENTS.md`
+from it (via `scripts/sync-agents.py`), generates `.codex/hooks.json`, seeds
+`.claude/settings.json` with the timestamp hook if absent, and flags a stray `wiki-*`
+under `.claude/skills` left over from the old per-vault model. Re-run either any time to
+repair links or refresh the generated files, e.g. after moving a vault, cloning the repo
+to a new path, or **editing `wiki-conventions.md`** (the `.sh` even converts a stale real
+copy back into a symlink; `sync-agents.py --all` refreshes every registered vault's
+AGENTS.md in one go). `wire-vault.ps1` links directories with junctions and
 `wiki-conventions.md` with a symlink (or a copy if Developer Mode is off); see
 [`docs/getting-started.md`](docs/getting-started.md).
 
@@ -95,13 +109,47 @@ EOF
 `@.claude/wiki-conventions.md` is a Claude Code import: the shared rules in
 [`wiki-conventions.md`](wiki-conventions.md) are pulled into every vault's `CLAUDE.md`
 through that symlink, so editing them once in the repo updates all vaults. Keep
-per-vault rules below the import.
+per-vault rules below the import. (The by-hand form skips the generated
+AGENTS.md / hook configs; run `wire-vault.sh` for the full multi-agent wiring.)
 
 If the vault has no `.manifest.json` yet, initialize it: run `wiki-setup` ("set up
 my wiki") from inside the vault, or `wiki-scripts/regen-manifest.py` if it already
 has notes. Keep the vault relocatable, with no hard-coded absolute paths pointing back
 at itself, so `cp -r <vault> elsewhere && cd elsewhere` just works (see the keystone
 `skills/wiki/SKILL.md`).
+
+## Multi-agent support
+
+The same wiring serves three agents; per-tool mechanics, and the reasoning, in one place:
+
+| Layer | Claude Code | Codex CLI | Copilot CLI |
+|---|---|---|---|
+| Skills (user level) | `~/.claude/skills/*` symlinks | `~/.agents/skills/*` symlinks | `~/.agents/skills/*` (same links) |
+| Instructions (per vault) | `CLAUDE.md` + live `@`-import | generated `AGENTS.md` | `AGENTS.md` (or `CLAUDE.md`; reads both) |
+| Timestamp hook (per vault) | `.claude/settings.json` (seeded) | `.codex/hooks.json` (generated) | `.github/hooks` (symlink) |
+
+- **Skills.** The `SKILL.md` format is the [Agent Skills](https://agentskills.io/) open
+  standard; these skills keep to the portable core (`name` + `description` frontmatter,
+  `references/` subdirs), so one copy works everywhere. All three tools follow symlinked
+  skill directories. `~/.agents/skills/` is the standard personal location for Codex and
+  Copilot (Cursor reads it too); Claude Code still requires `~/.claude/skills/`.
+- **Instructions.** Claude Code and Copilot (v1.0.66+) resolve `@`-imports in `CLAUDE.md`
+  live, so the conventions symlink is enough for them. Codex reads `AGENTS.md` with **no
+  import mechanism** (an `@path` line stays literal text), so `sync-agents.py` generates a
+  per-vault `AGENTS.md` with the imports physically inlined. `CLAUDE.md` is the master;
+  `AGENTS.md` carries a `GENERATED - DO NOT EDIT` banner and goes stale only until the
+  next `wire-vault.sh <vault>` / `sync-agents.py --all`. (This deliberately inverts the
+  usual "AGENTS.md is the source of truth, CLAUDE.md is a shim" advice: the shared half of
+  the instructions lives in this repo and must be *inlined* for Codex either way, and
+  making CLAUDE.md the master keeps Claude's copy live-fresh with zero regeneration.)
+- **Hooks.** All three tools have Claude-compatible PostToolUse hook systems, so one
+  script (`hooks/update-timestamp.py`) serves them all; only the registration differs.
+  Copilot's config is static and vault-relative, so it is a symlink (`.github/hooks` →
+  `hooks/copilot/`). Codex resolves hook commands against the session cwd, so its config
+  needs an absolute path and is generated. **Codex asks you to trust project hooks once:
+  run `/hooks` inside Codex in the vault the first time.**
+- Codex also wants each vault trusted (`trust_level` prompt on first launch), and
+  `wiki-claude-history` is inherently Claude-specific; the other skills are tool-neutral.
 
 ## Choosing a vault
 
@@ -133,9 +181,13 @@ copy or share a vault:
   data*.
 - **Tooling is shared, not copied.** The skills, scripts, and conventions live here in
   the repo. Skills are linked once at user level; scripts/conventions/hooks are *symlinked*
-  into each vault's `.claude/`. That is deliberate (edit once, every vault updates) but it
-  means those links (and the `@.claude/wiki-conventions.md` import in `CLAUDE.md`) only
-  resolve where this repo exists at the linked path.
+  into each vault's `.claude/` (and `.github/hooks` for Copilot). That is deliberate (edit
+  once, every vault updates) but it means those links (and the
+  `@.claude/wiki-conventions.md` import in `CLAUDE.md`) only resolve where this repo
+  exists at the linked path.
+- **Generated files are per-machine too.** `AGENTS.md` travels fine (it is a plain file),
+  but `.codex/hooks.json` bakes in this machine's repo path; re-running `wire-vault.sh`
+  on the other machine regenerates it.
 
 A note on **shared/synced vaults**: WSL symlinks do not replicate as working links through
 OneDrive/Dropbox, and `.claude/` is typically gitignored, so the per-vault links are inherently

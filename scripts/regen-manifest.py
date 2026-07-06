@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.8"
+# dependencies = []
+# ///
 """Re-sync .manifest.json with the current state of the vault.
 
 Walks the vault, finds every content .md (skipping dotdirs and scaffolding),
@@ -38,7 +42,7 @@ def find_vault() -> pathlib.Path:
 
 
 VAULT = find_vault()
-SCAFFOLD = {"index.md", "log.md"}
+SCAFFOLD = {"index.md", "log.md", "CLAUDE.md", "AGENTS.md"}
 DRY = os.environ.get("DRY_RUN") == "1"
 
 

@@ -65,6 +65,28 @@ In raw mode, each file in `$OBSIDIAN_VAULT_PATH/_raw/` is treated as a source. A
 
 **Deletion safety:** Only delete the specific file that was just promoted. Before deleting, verify the resolved path is inside `$OBSIDIAN_VAULT_PATH/_raw/` — never delete files outside this directory. Never use wildcards or recursive deletion (`rm -rf`, `rm *`). Delete one file at a time by its exact path.
 
+## Ingest Depth (orthogonal to mode)
+
+Depth is a **separate axis** from the modes above: modes choose *which sources* to process, depth
+chooses *how much of each source* to capture. Depth is **coverage, not verbosity** — every page is
+written tersely at any depth (see the concision rule in Step 5). Deeper means *more distinct facts
+captured across more atomic pages and links*, never more words per fact. Two depths:
+
+- **Standard (default).** Capture the high-signal knowledge: the concepts, claims, and links a
+  reader would actually reach for. Secondary detail that a reader can infer or would rarely need is
+  dropped.
+- **Comprehensive.** Maximize recall: capture *every distinct claim* the source makes, split finer
+  into atomic pages rather than folding detail into one dense page, and add the full web of links.
+  Nothing meaningful is left on the table. Still terse — many tight pages, not long ones.
+
+Neither depth is a page-count target; both let the source's density set how many pages result (see
+Step 4).
+
+Pick **comprehensive** when the user says "comprehensive", "deep", "exhaustive", "capture
+everything", "don't miss anything", "thorough ingest", or passes a `--deep`/`--comprehensive` flag,
+or when the source is a high-value reference worth mining fully. Otherwise use **standard**. When
+unsure and the source is large or important, ask which depth.
+
 ## The Ingest Process
 
 ### Step 1: Read the Source
@@ -100,6 +122,8 @@ From the source, identify:
 - **Relationships** between concepts (what connects to what)
 - **Open questions** the source raises but doesn't answer
 
+Extraction recall scales with **depth** (see Ingest Depth): at *standard* depth pull the high-signal claims a reader would reach for; at *comprehensive* depth pull every distinct claim, including secondary detail and edge cases.
+
 **Track provenance per claim as you go.** For each claim you extract, mentally tag it as:
 - *Extracted* — the source explicitly states this
 - *Inferred* — you're generalizing across sources, drawing an implication, or filling a gap
@@ -118,7 +142,7 @@ If the source is not project-specific, put everything in global categories.
 
 ### Step 4: Plan Updates
 
-Before writing anything, plan which pages to update or create. Aim for 10-15 pages per ingest. For each:
+Before writing anything, plan which pages to update or create. Don't steer toward a page count — the number is an *emergent result* of two things, not a target: **depth** (how many facts you capture) and **atomicity** (one concept per page). Let the source's density set the count. A count is only a sanity check: one page from a rich source means you under-split; many pages from a thin one means you over-split. For each:
 - Does this page already exist? (Check `index.md` and use Glob to search `OBSIDIAN_VAULT_PATH`)
 - If it exists, what new information does this source add?
 - If it's new, which category does it belong in?
@@ -140,6 +164,8 @@ For each page in your plan:
 - Update the `updated` timestamp in frontmatter
 - Add the new source to the `sources` list
 - Resolve any contradictions between old and new information (note them if unresolvable)
+
+**Write concisely — at every depth.** Distil, don't pad. Prefer tight bullets over prose paragraphs; cut hedging, restatement, and throat-clearing. Every sentence must carry a fact the reader can't infer from the others. If it can be said in a clause, don't spend a sentence; if a section is empty, omit it. Concision is *density* (no filler per fact) and is always on; it is independent of depth, which is *coverage* (how many facts across how many pages). A comprehensive ingest is many tight pages, never long-winded ones.
 
 **Write a `summary:` frontmatter field** on every new page (1–2 sentences) answering "what is this page about?" for a reader who hasn't opened it. **HARD LIMIT — the summary MUST be under 200 characters.** Count the characters before you write the field; if it is 200 or more, cut it down until it fits (drop clauses, not meaning). `wiki-lint` fails any summary of 200+ chars, so an oversized summary is a guaranteed lint error — never emit one. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content and re-check the length. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
 
@@ -193,26 +219,27 @@ If the manifest doesn't exist yet, create it with `version: 1`.
 
 **`index.md`** — Add entries for any new pages, update summaries for modified pages.
 
-**`log.md`** — Append an entry:
-```
-- [TIMESTAMP] INGEST source="path/to/source" pages_updated=N pages_created=M mode=append|full
+**`log.md` and `hot.md` — don't hand-edit; drive the mechanical parts with `wiki-journal.py`.**
+The *distillation* is yours (compose the one-sentence Recent-Activity bullet as the
+*conceptual* change, not a file list — e.g. "Ingested Fowler's microservices article —
+3 new concept pages on service decomposition, API gateway, bounded contexts"). The script
+owns the plumbing: timestamped log append, prepending the entry, trimming to the newest N,
+`updated:` bump, and creating `hot.md` from template if missing. One call does both files:
+
+```bash
+uv run .claude/wiki-scripts/wiki-journal.py --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'INGEST source="path/to/source" pages_updated=N pages_created=M mode=append' \
+  --hot-entry '**One-line conceptual change.** Detail with [[wikilinks]].' \
+  --hot-trim 3
 ```
 
-**`hot.md`** — Read `$OBSIDIAN_VAULT_PATH/hot.md` (create from template below if missing). Rewrite the **Recent Activity** section to reflect what you just ingested — keep it to the last 3 operations max. Update **Key Takeaways** and **Active Threads** if the content materially shifted them. Update the `updated` timestamp.
-
-Write the *conceptual* change, not a file list. Example: "Ingested Fowler's microservices article — 3 new concept pages on service decomposition, API gateway, bounded contexts."
-
-hot.md template (use if the file doesn't exist):
-```markdown
----
-title: Hot Cache
-updated: TIMESTAMP
----
-## Recent Activity
-## Active Threads
-## Key Takeaways
-## Flagged Contradictions
-```
+- Pass `--log` alone to append only the log line; `--hot-entry` alone to touch only hot.md.
+- The log verb is free text (`INGEST`, `CAPTURE`, `FIX`, …); the timestamp is added for you
+  (`--date-only` for a date-only stamp).
+- `--hot-trim 3` keeps Recent Activity to the last 3 operations. Only a top-level `## ` heading
+  bounds the section, so a `## Tooling …` subsection below is preserved.
+- **Key Takeaways / Active Threads / Flagged Contradictions are semantic** — the script doesn't
+  touch them. If the ingest materially shifted one, edit it yourself with Edit.
 
 ## Handling Multiple Sources
 

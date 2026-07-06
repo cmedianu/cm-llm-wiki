@@ -49,7 +49,7 @@ import yaml
 # Constants
 # ---------------------------------------------------------------------------
 
-SCAFFOLDING = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md"}
+SCAFFOLDING = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
 
 # `sources` intentionally omitted: most pages here are self-authored and have no
 # external source, so requiring it produced noise instead of signal.

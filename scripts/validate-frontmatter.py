@@ -29,7 +29,7 @@ import pathlib
 import yaml
 
 # Basenames that are scaffolding / meta, not pages — frontmatter not required.
-ALLOW_NO_FRONTMATTER = {"index.md", "log.md", "hot.md", "CLAUDE.md", "README.md"}
+ALLOW_NO_FRONTMATTER = {"index.md", "log.md", "hot.md", "CLAUDE.md", "AGENTS.md", "README.md"}
 
 
 def find_vault() -> pathlib.Path:

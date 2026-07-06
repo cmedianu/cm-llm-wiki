@@ -1,4 +1,8 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.8"
+# dependencies = []
+# ///
 """Rename every content .md to kebab-case-lowercase and rewrite all wikilinks.
 
 Folders keep their casing by default. To rename selected folders too, edit
@@ -102,7 +106,7 @@ def build_path_mapping():
         rel = p.relative_to(VAULT).as_posix()
         if any(part.startswith(".") for part in rel.split("/")):
             continue
-        if rel in {"index.md", "log.md"}:
+        if rel in {"index.md", "log.md", "CLAUDE.md", "AGENTS.md"}:
             # scaffolding: keep these names
             mapping[rel[:-3]] = rel[:-3]
             continue

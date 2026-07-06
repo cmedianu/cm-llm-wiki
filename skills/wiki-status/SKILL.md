@@ -208,7 +208,7 @@ It builds the wikilink graph once and computes — deterministically, no LLM ari
 - **Cross-category edges** — links that cross category boundaries — the non-obvious, cross-domain connections
 - **Graph delta** — new/removed pages and links since the last run, and pages that gained or lost all incoming links
 
-The delta snapshot lives at `~/.obsidian-wiki/state/<vault-id>/graph-snapshot.json` — the script writes and reads it, so nothing is stored inside the vault (a copied vault simply starts a fresh snapshot). (No `uv`? Run it as `python3 .claude/wiki-scripts/wiki-graph.py` after `pip install pyyaml`.)
+The delta snapshot lives at `~/.obsidian-wiki/state/<vault-id>/graph-snapshot.json` — the script writes and reads it, so nothing is stored inside the vault (a copied vault simply starts a fresh snapshot). (Requires `uv`; the PEP 723 header supplies `pyyaml` automatically. Never fall back to a bare `python3`.)
 
 ### Step 2: Render `_insights.md`
 

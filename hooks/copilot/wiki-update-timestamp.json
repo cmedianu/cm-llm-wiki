@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "bash": "uv run --script .claude/hooks/update-timestamp.py",
+        "matcher": "Edit|Write|MultiEdit",
+        "cwd": ".",
+        "timeoutSec": 15
+      }
+    ]
+  }
+}
