@@ -54,7 +54,7 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   both dotdirs (`.`) and `_`-dirs when walking the vault (`validate-frontmatter.py`,
   `regen-manifest.py`, `wiki-graph.py`), so files there need no frontmatter and never appear
   in indexes or the graph. Put scratch, source archives, and runnable tools under a `_`-dir.
-- **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages.
+- **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages. **Don't hand-append to `log.md` or `hot.md`** — the `wiki-journal.py` script owns the timestamped `log.md` line, the `hot.md` Recent-Activity prepend/trim, and the `updated:` bump; a skill passes it only the distilled one-line entry. `hot.md` is the vault-root ~500-word recent-activity cache (a `## Recent Activity` list plus hand-curated `## Active Threads` / `## Key Takeaways` / `## Flagged Contradictions`): read it for fast context, and edit its semantic sections by hand.
 - **Folder indexes can be base-backed** (Obsidian Bases). A folder's `index.md` can describe the
   category (a one-line `summary:` in its frontmatter) and list its pages with a live **base**
   block instead of a hand-maintained bullet list, so adding or renaming a page needs no index

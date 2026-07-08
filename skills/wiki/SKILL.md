@@ -35,12 +35,14 @@ The rules governing how the wiki is structured — categories, conventions, page
 
 Organize pages into folders that match your domain. **Categories are discovered from disk**, not declared in config: any top-level directory not prefixed with `_` or `.` is a category. `_foo/` is system state (`_sources/`, `_archives/`), `.foo/` is tool config (`.obsidian/`, `.claude/`). Everything else is content.
 
-Two patterns work well:
+**In an existing vault the categories are simply whatever top-level folders are already there.** Discover them by listing the vault root (skipping `_*` and `.*` dirs) and route each new page into the best-fitting existing folder. Never impose a fixed taxonomy on a vault that already has its own.
 
-- **Domain folders** — folder names mirror the subjects of the notes (`AI/`, `Health/`, `Recipes/`, etc.). Natural for hand-authored personal wikis.
+For a **brand-new empty vault**, any consistent scheme works — two that suit different needs:
+
+- **Domain folders** — folder names mirror the subjects of the notes (`ai/`, `health/`, `recipes/`, etc.). Natural for hand-authored personal wikis.
 - **Karpathy taxonomy** — `concepts/`, `entities/`, `skills/`, `references/`, `synthesis/`, `journal/`. Natural for external-source distillation; less so for hand-authored notes.
 
-Pick one and be consistent within a vault. Different vaults can use different schemas.
+Neither is privileged: pick whichever fits, or define your own folders, and be consistent within a vault. Because different vaults use different schemas, every downstream skill discovers categories from disk rather than assuming any particular set.
 
 ## Special Files
 
@@ -48,7 +50,7 @@ Every wiki has these at its root:
 
 ### `index.md`
 
-A content-oriented catalog organized by folder. Each entry has a one-line summary and tags. Rebuild after every ingest.
+A content-oriented catalog organized by folder. A curated `index.md` gives each entry a one-line summary and tags:
 
 ```markdown
 # Wiki Index
@@ -63,6 +65,8 @@ A content-oriented catalog organized by folder. Each entry has a one-line summar
 - ❌ `description (#tag)` — breaks tag parsing
 - ✅ `description ( #tag)` — proper spacing
 
+An `index.md` may instead be **base-backed** — an Obsidian Bases query that lists the folder's pages live from their frontmatter. A base renders as rows *only inside Obsidian*; read as raw markdown it is the query source, not a page list. **So never treat `index.md` as the authoritative page inventory** — derive inventory from `.manifest.json` or a `glob` + frontmatter scan. Adding a page needs no edit to a base-backed index; only a hand-curated one gets the new line.
+
 ### `log.md`
 
 Append-only operations record. One line per operation:
@@ -73,7 +77,11 @@ Append-only operations record. One line per operation:
 - [2024-03-16T09:00:00Z] LINT issues_found=2 orphans=1 contradictions=1
 ```
 
-The op-code list is open — invent new ones as needed.
+The op-code list is open — invent new ones as needed. **Don't hand-append.** The `wiki-journal.py` script (see Reference) owns the timestamp, placement, and `updated:` bump; a skill passes it only the distilled one-line entry.
+
+### `hot.md`
+
+A ~500-word semantic snapshot of recent activity — the fast-context file read first by query and ingest skills before they touch `index.md`. It has a `## Recent Activity` list (bounded to the newest few operations) plus hand-curated `## Active Threads`, `## Key Takeaways`, and `## Flagged Contradictions` sections. `wiki-journal.py` prepends and trims the Recent Activity bullet mechanically; the semantic sections are edited by hand.
 
 ### `.manifest.json`
 
@@ -188,6 +196,33 @@ The wiki uses Obsidian **wikilinks** with full vault-relative paths:
 
 Always use vault-relative paths, not bare basenames — some basenames aren't globally unique. Run `wiki-link` or `wiki-lint` to find and fix broken or missing links.
 
+## Page-Writing Protocol
+
+Every skill that **creates or updates pages** (`wiki-ingest`, `wiki-capture`, `wiki-update`, `wiki-research`, `wiki-claude-history`) follows this one contract rather than restating it:
+
+1. **Frontmatter** — use the Page Template above. Required: `title`, `category`, `tags`, `summary`, `sources`, `created`, `updated`. `category` **equals the page's folder, discovered from disk** (never an assumed taxonomy). Ingest-class skills also set `lifecycle: draft` + `lifecycle_changed: <today>`; only a human promotes lifecycle, and it is left unchanged on update.
+2. **Summary** — 1–2 sentences, **hard limit under 200 characters** (count before writing; `wiki-lint` fails 200+). It powers `wiki-query`'s cheap retrieval, so rewrite it whenever a page's meaning shifts.
+3. **Provenance markers** — apply `^[inferred]` / `^[ambiguous]` per Provenance Markers above; unmarked = extracted. The inline markers are the whole signal — no numeric score.
+4. **Wikilinks** — link each new page to **at least two** existing pages, using full vault-relative paths per Link Format above.
+5. **Privacy** — apply Privacy & Visibility below before surfacing a page anywhere more public than itself.
+6. **Journal** — after writing, record the change with `wiki-journal.py` (see Reference); never hand-edit `log.md` / `hot.md`. You compose only the one-line conceptual entry.
+7. **Manifest** — never hand-write `.manifest.json`. After writing pages, run `regen-manifest.py` (see Reference) to resync it from disk.
+
+Category, `index.md` membership, and page inventory are all **discovered from disk / the manifest**, never assumed.
+
+## Privacy & Visibility
+
+Two mechanisms keep private knowledge from leaking into more-public surfaces. Every read and write skill honours both.
+
+- **`private_paths`** — a top-level key in `.manifest.json` listing path prefixes that are private areas (e.g. `["me", "context/me"]`). A page's title or summary may appear only in an `index.md` *within its own privacy scope*; a more-public index references a private area only via that area's own section `index.md`, never by listing its pages. A **synthesis or cross-cutting page that draws on private sources is itself private-scoped** — file it inside the private area, or exclude those sources. `wiki-lint.py` enforces the index side (`index_privacy_leak`); vaults with no `private_paths` are unaffected.
+- **`visibility/` tags** — `visibility/internal` and `visibility/pii` mark page-level sensitivity. `wiki-query`'s visibility filter drops these when the user asks for a public/user-facing view; never surface a blocked page's content in that mode.
+
+Rule of thumb: *a title or summary travels only as far up as its own privacy scope.*
+
+## Orphans
+
+An **orphan** is a content page with no incoming wikilinks from other **content** pages — `index.md`, `log.md`, and `hot.md` do not count as incoming links. `wiki-lint.py` and `wiki-graph.py` compute orphans deterministically; treat their output as the source of truth rather than re-deriving it by reading pages.
+
 ## Config Resolution Protocol
 
 The vault is self-describing — **zero configuration**, no config file or per-vault settings. The vault is the directory containing `.manifest.json`; every other path derives from it (`_sources/`, `_archives/`, …). Categories are discovered from disk (any top-level dir not prefixed `_` or `.`). No API keys — the agent already has LLM access.
@@ -242,9 +277,11 @@ Maintenance scripts (`../../scripts/`, symlinked into vaults as `.claude/wiki-sc
 
 - `wiki-lint.py` — deterministic health checks (orphans, broken links, frontmatter, index, stale, lifecycle, provenance ratios). Used by `wiki-lint`.
 - `wiki-graph.py` — wikilink-graph analysis (hubs, tag cohesion, orphans, bridges, cross-category edges, delta). Used by `wiki-status` insights.
-- `regen-manifest.py` — rebuild `.manifest.json` from filesystem
+- `regen-manifest.py` — rebuild `.manifest.json` from the filesystem. The write skills call this instead of hand-writing manifest entries.
+- `wiki-journal.py` — mechanical `log.md` append + `hot.md` Recent-Activity prepend/trim + `updated:` bump. The write skills call this instead of hand-editing the journal; they supply only the distilled one-line entry.
 - `kebab-rename.py` — mass kebab-case rename + wikilink rewrite
 - `validate-frontmatter.py` — verify every page's YAML frontmatter parses
+- `sync-agents.py` — regenerate a vault's `AGENTS.md` from its `CLAUDE.md` (for agents with no `@`-import mechanism); run after editing `wiki-conventions.md`
 
 Reference (`references/`):
 
