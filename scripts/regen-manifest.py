@@ -42,7 +42,8 @@ def find_vault() -> pathlib.Path:
 
 
 VAULT = find_vault()
-SCAFFOLD = {"index.md", "log.md", "CLAUDE.md", "AGENTS.md"}
+# Scaffolding basenames (any depth) — same set as wiki-lint/wiki-graph/validate-frontmatter.
+SCAFFOLD = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
 DRY = os.environ.get("DRY_RUN") == "1"
 
 
@@ -60,8 +61,8 @@ def discover_sources():
         rel = p.relative_to(VAULT).as_posix()
         if any(part.startswith(".") or part.startswith("_") for part in rel.split("/")):
             continue  # skip dotdirs and _-dirs (_raw, _bin, _strata-emails) — not wiki content
-        if rel in SCAFFOLD:
-            continue
+        if rel.split("/")[-1] in SCAFFOLD:
+            continue  # scaffolding at any depth (folder indexes, READMEs) — not sources
         st = p.stat()
         out[rel] = {"size_bytes": st.st_size, "mtime": mtime_iso(p)}
     return out

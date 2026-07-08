@@ -1,0 +1,101 @@
+---
+name: wiki-compact
+description: >
+  Shrink and consolidate the Obsidian wiki: merge near-duplicate pages, retire stale or superseded
+  content to `lifecycle: archived`, distil raw dumps into proper pages (parking the originals in
+  _sources/), and roll old log.md entries into _archives/. Use when the user says "compact the wiki",
+  "prune my wiki", "merge duplicates", "archive stale pages", "the wiki is getting bloated",
+  "rotate the log", or after wiki-lint reports oversized_page / stale_snapshot / log_size findings.
+  This is the shrink-side counterpart to wiki-ingest — it removes and consolidates, never adds knowledge.
+---
+
+# Wiki Compact — Prune, Merge, Archive
+
+You are reducing the wiki's weight without losing knowledge. Growth skills (ingest, capture, research) only ever add; this skill is the counterweight: it merges what drifted apart, retires what stopped being true, and keeps the always-growing files bounded. Every byte a future agent doesn't have to read is the win.
+
+**This skill deletes and rewrites. Confirm the plan with the user before executing it** (Step 2 → Step 3 gate). `wiki-rebuild` handles the nuclear cases (archive-everything, restore); this skill is the scalpel.
+
+## Before You Start
+
+1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`.
+2. Run the lint script — its findings are the work queue:
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-lint.py" --format json
+   ```
+3. Read `hot.md` if it exists — don't compact something the user is actively working in.
+
+## Step 1: Build the Compaction Queue
+
+Collect candidates from four detectors. Mechanical ones come from the lint output — don't recompute them by hand.
+
+| Source | Candidate |
+|---|---|
+| lint `oversized_page` | page to split, distil, or mark `lifecycle: living` |
+| lint `stale_snapshot` | dated page with a newer sibling — wire `superseded_by` or archive |
+| lint `stale_age` | page untouched > 90 days — confirm, refresh, or archive |
+| lint `log_size` | log.md needs a roll (Step 4) |
+
+Then the two judgments a script can't make:
+
+- **Near-duplicates.** Group content pages by shared distinctive title words and overlapping tags (frontmatter grep — don't open bodies yet). Read only the groups' summaries; open bodies only for groups whose summaries plainly cover the same topic. Two pages are merge candidates when a reader would not know which to open.
+- **Raw dumps posing as pages.** Pages that are verbatim pastes (transcripts, article copies, tool output) rather than distilled knowledge. The tell: no structure, no wikilinks, prose addressed to nobody.
+
+## Step 2: Plan — and Get Approval
+
+Produce a table: candidate → action → what happens to the content. Actions:
+
+- **merge A into B** — fold A's unique facts into B, then archive A with `superseded_by: <B's path>`.
+- **archive** — set `lifecycle: archived` (+ `lifecycle_changed`), leave the page in place. Archived pages stay resolvable (links keep working) but drop out of active-page queries.
+- **distil** — replace a raw dump in place with a distilled page; move the verbatim original to `_sources/` (which needs no frontmatter).
+- **split** — break an oversized page into atomic pages plus a short hub page at the original path so inbound links survive.
+- **skip** — with one line of why (e.g. `living` dossier, event record, user says it's active).
+
+Rules of the road:
+
+- **Never delete knowledge.** Deletion is only for genuinely empty/junk files; everything else merges, archives, or moves to `_sources/`. When merging, every fact that exists only in the losing page must land in the surviving page.
+- **Keep event records.** Dated pages that record events (a scan report, a meeting, a completed trip) are history, not staleness — archive only if the user agrees they're done being referenced.
+- **Respect privacy scope** per `## Privacy & Visibility` in `wiki/SKILL.md` — a merge must never move private-area content to a more public path.
+- **Don't touch `_`-dirs** (`_sources/`, `_archives/`, `_raw/`) except to move things *into* them.
+
+**Show the plan and wait for the user's go-ahead.** They may pull items; execute only what survives.
+
+## Step 3: Execute
+
+For each approved action, in this order (merges first, so splits/archives see the merged state):
+
+1. Apply the content change per the Page-Writing Protocol in `wiki/SKILL.md` (full-path wikilinks, summary under 200 chars on any page you rewrite).
+2. Rewire inbound links: grep the vault for wikilinks to any page you merged away or moved, and repoint them at the survivor (skip `log.md` — historical entries stay verbatim).
+3. Curated `index.md` files: remove or repoint lines for archived/merged pages (base-backed indexes need no edit).
+
+## Step 4: Roll the Log
+
+If lint flagged `log_size` (or the user asked), roll old entries into `_archives/log-<year>.md`, keeping a recent tail:
+
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" --log-trim 40
+```
+
+The script owns the mechanics (year-split archive files, frontmatter preserved). Don't hand-edit the log to "clean it up" — entries are the historical record.
+
+## Step 5: Verify and Record
+
+1. Resync the manifest, then lint — expect the queue findings you fixed to be gone and **zero new errors**:
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py"
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-lint.py" --format md
+   ```
+2. Record the operation:
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+     --log 'COMPACT merged=N archived=M distilled=K log_rolled=Y' \
+     --hot-entry '**Compacted the wiki.** Merged <what>, archived <what>, rolled the log.' --hot-trim 3
+   ```
+3. Report to the user: what shrank, what moved where, and any candidate you recommend revisiting next time.
+
+## Quality Checklist
+
+- [ ] Every merge preserved the losing page's unique facts and set its `superseded_by`
+- [ ] No inbound wikilink left pointing at a merged-away path (grep to confirm)
+- [ ] Raw originals parked in `_sources/`, not deleted
+- [ ] Manifest resynced via `regen-manifest.py`; lint shows no new errors
+- [ ] Operation journaled via `wiki-journal.py`

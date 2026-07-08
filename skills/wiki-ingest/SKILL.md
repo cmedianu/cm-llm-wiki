@@ -197,6 +197,8 @@ touch them. If the ingest materially shifted one, edit it yourself with Edit.
 
 When ingesting a directory, process sources one at a time but maintain a running awareness of the full batch. Later sources may strengthen or contradict earlier ones — that's fine, just update pages as you go.
 
+**Fan out when the batch is large.** Independent sources are embarrassingly parallel: for ~4+ unrelated documents, spawn one subagent per source (or per thematic cluster), each doing Steps 1–6 for its slice, then reconcile overlaps, run the cross-reference pass, and do Step 7 (manifest regen + journal) **once at the top level** — parallel writers must never race on `.manifest.json`, `log.md`, or `hot.md`. Keep related sources in the same slice so their pages merge instead of duplicating.
+
 ## Quality Checklist
 
 After ingesting, verify:

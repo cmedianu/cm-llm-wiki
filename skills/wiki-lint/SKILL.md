@@ -93,4 +93,4 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
   --log 'LINT errors=E warnings=W (orphans=O broken=B stale=S …)'
 ```
 
-Offer to fix issues automatically or let the user decide which to address.
+Offer to fix issues automatically or let the user decide which to address. When the findings are consolidation-shaped (oversized_page, stale_snapshot, log_size, duplicate-looking pages), point the user at `wiki-compact` — it owns merging, archiving, and log rolling.

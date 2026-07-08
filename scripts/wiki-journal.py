@@ -35,6 +35,7 @@ Notes
 
 import argparse
 import datetime as _dt
+import re
 import sys
 from pathlib import Path
 
@@ -71,13 +72,81 @@ def _log_timestamp(ts_override: str | None, date_only: bool) -> str:
 
 
 def append_log(vault: Path, body: str, timestamp: str) -> str:
+    """O(1) append — never reads or rewrites the existing log."""
     log_path = vault / "log.md"
     line = f"- [{timestamp}] {body.strip()}"
-    existing = log_path.read_text(encoding="utf-8") if log_path.exists() else ""
-    if existing and not existing.endswith("\n"):
-        existing += "\n"
-    log_path.write_text(existing + line + "\n", encoding="utf-8")
+    prefix = ""
+    if log_path.exists() and log_path.stat().st_size > 0:
+        with log_path.open("rb") as f:
+            f.seek(-1, 2)
+            if f.read(1) != b"\n":
+                prefix = "\n"
+    with log_path.open("a", encoding="utf-8") as f:
+        f.write(prefix + line + "\n")
     return line
+
+
+_ENTRY_RE = re.compile(r"^- \[(\d{4})-\d{2}-\d{2}")
+
+
+def trim_log(vault: Path, keep: int) -> dict:
+    """Roll all but the newest `keep` entries into _archives/log-<year>.md.
+
+    Assumes the canonical log shape: optional frontmatter, then chronological
+    (oldest-first) `- [timestamp] ...` entries, each possibly multi-line.
+    """
+    log_path = vault / "log.md"
+    if not log_path.exists():
+        return {"rolled": 0, "kept": 0}
+    lines = log_path.read_text(encoding="utf-8").split("\n")
+
+    head: list[str] = []
+    i = 0
+    if lines and lines[0].strip() == "---":
+        for i in range(1, len(lines)):
+            if lines[i].strip() == "---":
+                break
+        head = lines[: i + 1]
+        i += 1
+
+    entries: list[list[str]] = []
+    cur: list[str] | None = None
+    for ln in lines[i:]:
+        if ln.startswith("- ["):
+            if cur is not None:
+                entries.append(cur)
+            cur = [ln]
+        elif cur is not None:
+            cur.append(ln)
+        elif ln.strip():
+            head.append(ln)  # pre-entry prose/heading stays in place
+    if cur is not None:
+        entries.append(cur)
+
+    if len(entries) <= keep:
+        return {"rolled": 0, "kept": len(entries)}
+
+    if keep:
+        roll, kept = entries[:-keep], entries[-keep:]
+    else:
+        roll, kept = entries, []
+    archive_dir = vault / "_archives"
+    archive_dir.mkdir(exist_ok=True)
+    by_year: dict[str, list[str]] = {}
+    for e in roll:
+        m = _ENTRY_RE.match(e[0])
+        year = m.group(1) if m else "undated"
+        by_year.setdefault(year, []).extend(e)
+    for year, body_lines in by_year.items():
+        dest = archive_dir / f"log-{year}.md"
+        prev = dest.read_text(encoding="utf-8") if dest.exists() else f"# Wiki log archive — {year}\n"
+        if not prev.endswith("\n"):
+            prev += "\n"
+        dest.write_text(prev + "\n".join(body_lines) + "\n", encoding="utf-8")
+    out = head + [""] if head else []
+    out += [ln for e in kept for ln in e]
+    log_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    return {"rolled": len(roll), "kept": len(kept), "years": sorted(by_year)}
 
 
 def _bump_updated(lines: list[str], date: str) -> bool:
@@ -172,13 +241,16 @@ def main() -> int:
     ap.add_argument("--log", metavar="BODY", help='log line body after the timestamp, e.g. \'INGEST source="..." ...\'')
     ap.add_argument("--hot-entry", metavar="TEXT", help="Recent Activity bullet body (no leading '- ')")
     ap.add_argument("--hot-trim", type=int, metavar="N", help="keep only the newest N Recent Activity entries")
+    ap.add_argument("--log-trim", type=int, metavar="N", help="keep only the newest N log entries; roll older ones into _archives/log-<year>.md")
     ap.add_argument("--date", help="override today's date (YYYY-MM-DD) for hot.md updated:")
     ap.add_argument("--ts", help="override the log timestamp verbatim")
     ap.add_argument("--date-only", action="store_true", help="use a date-only log timestamp")
     args = ap.parse_args()
 
-    if not args.log and not args.hot_entry and args.hot_trim is None:
-        ap.error("nothing to do: pass --log and/or --hot-entry (and optionally --hot-trim)")
+    if not args.log and not args.hot_entry and args.hot_trim is None and args.log_trim is None:
+        ap.error("nothing to do: pass --log, --hot-entry, --log-trim, and/or --hot-trim")
+    if args.log_trim is not None and args.log_trim < 0:
+        ap.error("--log-trim must be >= 0")
 
     vault = Path(args.vault).resolve()
     if not vault.is_dir():
@@ -189,6 +261,13 @@ def main() -> int:
     if args.log:
         line = append_log(vault, args.log, _log_timestamp(args.ts, args.date_only))
         out.append(f"log.md += {line}")
+
+    if args.log_trim is not None:
+        res = trim_log(vault, args.log_trim)
+        if res["rolled"]:
+            out.append(f"log.md — rolled {res['rolled']} entries into _archives/log-{{{','.join(res['years'])}}}.md, kept {res['kept']}")
+        else:
+            out.append(f"log.md — nothing to roll ({res['kept']} entries <= {args.log_trim})")
 
     if args.hot_entry is not None or args.hot_trim is not None:
         res = update_hot(vault, args.hot_entry, _today(args.date), args.hot_trim)

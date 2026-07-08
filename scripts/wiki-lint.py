@@ -12,13 +12,15 @@ output, every run.
 Checks performed:
   1. Orphaned pages — content pages with zero incoming wikilinks.
   2. Broken wikilinks — wikilinks whose target does not resolve.
-  3. Missing required frontmatter — title, category, tags, sources, created, updated.
+  3. Missing or invalid frontmatter — required fields absent, or a frontmatter
+     block that fails to parse as YAML (reported separately as invalid_frontmatter).
   4. Summary field — missing or over 200 characters.
   4b. Category mirrors folder — category that is neither the page's folder nor an
       ancestor of it (drift that hides the page from its folder's base index).
   5. Index consistency — pages missing from index, bad section headings, etc.
-  6. Hardcoded inventory counts — brittle "N pages/skills/…" phrases in prose.
-  7. Stale content — source files modified after page's updated date; age > 90 days.
+  6. Sizes and snapshots — oversized pages, unbounded log.md, and dated snapshot
+     pages that were never superseded or archived.
+  7. Stale content — pages not updated in > 90 days.
   8. Lifecycle + supersession — invalid lifecycle values, broken/cyclic superseded_by.
   9. Provenance marker ratios — ^[inferred] / ^[ambiguous] density by page.
   10. Misc promotion candidates — misc/ pages with strong affinity to a project.
@@ -60,13 +62,17 @@ VALID_LIFECYCLES = {"draft", "reviewed", "living", "archived"}
 # Headings in index.md that are allowed even if they don't match a real folder
 INDEX_META_HEADINGS = {"Root", "Meta", "Index", "Overview"}
 
-# Regex for hardcoded inventory counts (check 6)
-_COUNT_PATTERNS = [
-    re.compile(r"\b\d+\s+(?:pages|skills|scripts|sources|abstracts|notes|entries|files|servers|recipes)\b", re.IGNORECASE),
-    re.compile(r"\ball\s+\d+\b", re.IGNORECASE),
-    re.compile(r"\bthe\s+\d+\s+", re.IGNORECASE),
-    re.compile(r"\b\d+\+\s"),
-]
+# Oversized-page threshold (bytes). Big pages burn agent tokens on every read;
+# `living` dossiers and `archived` pages are exempt (monolithic by design / frozen).
+OVERSIZED_PAGE_BYTES = 25_000
+
+# log.md size that triggers a roll-old-entries warning (bytes)
+LOG_SIZE_BYTES = 50_000
+
+# A dated-snapshot page (YYYY-MM-DD in the filename) older than this without
+# `superseded_by` or `lifecycle: archived` is flagged as a stale snapshot.
+STALE_SNAPSHOT_DAYS = 90
+_FILENAME_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
 
 # Regex to extract wikilinks:  [[target]]  or  [[target|display]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -112,8 +118,31 @@ def is_content_page(rel: pathlib.PurePosixPath) -> bool:
 # Frontmatter helpers
 # ---------------------------------------------------------------------------
 
+# Pages whose frontmatter block exists but does not parse as a YAML mapping
+# (e.g. an unquoted `: ` in a value). Populated by load_frontmatter so
+# check_frontmatter_fields can report invalid_frontmatter, not missing_frontmatter.
+INVALID_YAML: set[pathlib.Path] = set()
+
+# Parse-once caches — a lint run reads each page many times across checks;
+# files don't change mid-run, so memoize the two hot parsers.
+_FM_CACHE: dict[pathlib.Path, Optional[dict]] = {}
+_LINK_CACHE: dict[pathlib.Path, list[tuple[int, str]]] = {}
+
+
 def load_frontmatter(path: pathlib.Path) -> Optional[dict]:
-    """Parse YAML frontmatter from a file. Returns dict or None on any failure."""
+    """Parse YAML frontmatter from a file. Returns dict or None on any failure.
+
+    Memoized per run. A file that HAS a frontmatter block that fails to parse
+    is additionally recorded in INVALID_YAML.
+    """
+    if path in _FM_CACHE:
+        return _FM_CACHE[path]
+    result = _load_frontmatter_uncached(path)
+    _FM_CACHE[path] = result
+    return result
+
+
+def _load_frontmatter_uncached(path: pathlib.Path) -> Optional[dict]:
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -127,13 +156,16 @@ def load_frontmatter(path: pathlib.Path) -> Optional[dict]:
             end = i
             break
     if end is None:
+        INVALID_YAML.add(path)
         return None
     block = "\n".join(lines[1:end])
     try:
         data = yaml.safe_load(block)
     except yaml.YAMLError:
+        INVALID_YAML.add(path)
         return None
     if not isinstance(data, dict):
+        INVALID_YAML.add(path)
         return None
     return data
 
@@ -146,10 +178,14 @@ def extract_wikilinks(path: pathlib.Path) -> list[tuple[int, str]]:
     """Return [(line_number, target), …] for wikilinks outside frontmatter and code blocks.
 
     line_number is 1-based. target has #heading / ^block suffixes stripped.
+    Memoized per run.
     """
+    if path in _LINK_CACHE:
+        return _LINK_CACHE[path]
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
+        _LINK_CACHE[path] = []
         return []
     lines = text.splitlines()
 
@@ -179,6 +215,7 @@ def extract_wikilinks(path: pathlib.Path) -> list[tuple[int, str]]:
             target = re.split(r"[#^]", target)[0].strip()
             if target:
                 results.append((lineno, target))
+    _LINK_CACHE[path] = results
     return results
 
 
@@ -340,7 +377,9 @@ def check_broken_links_and_orphans(
                     f"broken wikilink: [[{target}]]", lineno,
                 ))
             else:
-                if resolved in incoming:
+                # index.md is scaffolding: its links don't count as incoming
+                # (one orphan definition, shared with wiki-graph.py)
+                if resolved in incoming and page != index_path:
                     incoming[resolved] += 1
 
     # Orphan check. A page catalogued by a base-backed index is reachable via that
@@ -367,15 +406,24 @@ def check_frontmatter_fields(
         rel = str(page.relative_to(vault))
         fm = load_frontmatter(page)
         if fm is None:
-            # Report all required fields as missing
-            out.append(finding(
-                "error", "missing_frontmatter", rel,
-                f"missing required frontmatter fields: {', '.join(sorted(REQUIRED_FRONTMATTER))}",
-            ))
-            out.append(finding(
-                "warning", "missing_summary", rel,
-                "summary field missing",
-            ))
+            if page in INVALID_YAML:
+                # The block exists but doesn't parse — a different (worse) failure
+                # than absent frontmatter: Obsidian silently drops the whole
+                # Properties panel. Most common cause: an unquoted `: ` in a value.
+                out.append(finding(
+                    "error", "invalid_frontmatter", rel,
+                    "frontmatter block does not parse as YAML (unquoted ': ' in a "
+                    "value? unclosed block?) — Obsidian will not render Properties",
+                ))
+            else:
+                out.append(finding(
+                    "error", "missing_frontmatter", rel,
+                    f"missing required frontmatter fields: {', '.join(sorted(REQUIRED_FRONTMATTER))}",
+                ))
+                out.append(finding(
+                    "warning", "missing_summary", rel,
+                    "summary field missing",
+                ))
             continue
         # Check 3: required fields
         missing = [f for f in REQUIRED_FRONTMATTER if f not in fm]
@@ -527,62 +575,76 @@ def check_index_consistency(
     return out
 
 
-def check_hardcoded_counts(
+def check_sizes_and_snapshots(
     vault: pathlib.Path,
     content_pages: list[pathlib.Path],
 ) -> list[dict]:
-    """Check 6: hardcoded inventory counts."""
+    """Check 6: oversized pages, unbounded log.md, and stale dated snapshots.
+
+    - oversized_page: body over OVERSIZED_PAGE_BYTES burns agent tokens on every
+      read; split into atomic pages or park raw material under _sources/.
+      `living` and `archived` pages are exempt.
+    - log_size: log.md is append-only and unbounded; past LOG_SIZE_BYTES suggest
+      rolling old entries with `wiki-journal.py --log-trim N`.
+    - stale_snapshot: a page whose FILENAME carries a date (a point-in-time
+      snapshot) older than STALE_SNAPSHOT_DAYS that is neither archived nor
+      marked `superseded_by` — likely superseded by a newer snapshot. The
+      `updated:`-based stale_age check misses these because edit hooks bump
+      `updated:` on every touch.
+    """
     out = []
-    # Files to check: index.md, log.md, any README.md, and content pages
-    extra_paths = []
-    for name in ("index.md", "log.md"):
-        p = vault / name
-        if p.is_file():
-            extra_paths.append(p)
-    for p in vault.rglob("README.md"):
-        rel = p.relative_to(vault)
-        if not any(part.startswith(".") for part in rel.parts):
-            extra_paths.append(p)
+    snapshot_groups: dict[tuple, list[tuple[str, pathlib.Path]]] = {}
 
-    all_targets = list(content_pages) + extra_paths
-    seen_paths: set[pathlib.Path] = set()
-    deduped = []
-    for p in all_targets:
-        if p not in seen_paths:
-            seen_paths.add(p)
-            deduped.append(p)
-
-    for page in deduped:
+    for page in content_pages:
         rel = str(page.relative_to(vault))
         try:
-            text = page.read_text(encoding="utf-8", errors="replace")
+            size = page.stat().st_size
         except OSError:
             continue
-        lines = text.splitlines()
+        fm = load_frontmatter(page) or {}
+        lifecycle = fm.get("lifecycle")
 
-        # Determine body start (skip frontmatter)
-        body_start = 0
-        if lines and lines[0].strip() == "---":
-            for i in range(1, len(lines)):
-                if lines[i].strip() == "---":
-                    body_start = i + 1
-                    break
+        if size > OVERSIZED_PAGE_BYTES and lifecycle not in ("living", "archived"):
+            out.append(finding(
+                "warning", "oversized_page", rel,
+                f"page is {size // 1024} KB; split into atomic pages or move raw "
+                "material to _sources/ (mark `lifecycle: living` if monolithic by design)",
+            ))
 
-        in_fence = False
-        for lineno, line in enumerate(lines[body_start:], start=body_start + 1):
-            if _FENCE_RE.match(line.strip()):
-                in_fence = not in_fence
+        m = _FILENAME_DATE_RE.search(page.stem)
+        if m:
+            stem_key = (page.parent, _FILENAME_DATE_RE.sub("<date>", page.stem))
+            snapshot_groups.setdefault(stem_key, []).append((m.group(1), page))
+
+    # stale_snapshot: within a family of dated pages sharing the same
+    # date-stripped stem (planning-<date>, snapshot-<date>, ...), every page
+    # that has a NEWER sibling must be wired: `superseded_by` or archived.
+    # A lone dated page never fires — this detects unwired successors, not age.
+    for (_, _), members in snapshot_groups.items():
+        if len(members) < 2:
+            continue
+        newest = max(d for d, _ in members)
+        for d, page in members:
+            if d == newest:
                 continue
-            if in_fence:
-                continue
-            for pat in _COUNT_PATTERNS:
-                m = pat.search(line)
-                if m:
-                    out.append(finding(
-                        "warning", "hardcoded_count", rel,
-                        f"hardcoded inventory count: {m.group(0)!r}", lineno,
-                    ))
-                    break  # one finding per line
+            fm = load_frontmatter(page) or {}
+            if fm.get("lifecycle") != "archived" and not fm.get("superseded_by"):
+                rel = str(page.relative_to(vault))
+                out.append(finding(
+                    "warning", "stale_snapshot", rel,
+                    f"a newer sibling snapshot ({newest}) exists but this page has "
+                    "no `superseded_by` and is not archived — wire the supersession",
+                ))
+
+    log_path = vault / "log.md"
+    if log_path.is_file():
+        log_size = log_path.stat().st_size
+        if log_size > LOG_SIZE_BYTES:
+            out.append(finding(
+                "warning", "log_size", "log.md",
+                f"log.md is {log_size // 1024} KB; roll old entries into _archives/ "
+                "with `wiki-journal.py --log-trim N`",
+            ))
 
     return out
 
@@ -951,15 +1013,17 @@ _CATEGORY_SECTION = {
     "index_broken_link": "Broken Wikilinks (Index)",
     "orphaned_page": "Orphaned Pages",
     "missing_frontmatter": "Missing Required Frontmatter",
+    "invalid_frontmatter": "Invalid Frontmatter (YAML does not parse)",
     "missing_summary": "Missing Summary",
     "oversized_summary": "Oversized Summary",
     "category_folder_mismatch": "Category Does Not Mirror Folder",
     "missing_from_index": "Missing from Index",
     "index_heading_mismatch": "Index Heading Mismatches",
     "index_bare_basename": "Index Bare-Basename Wikilinks",
-    "hardcoded_count": "Hardcoded Inventory Counts",
+    "oversized_page": "Oversized Pages",
+    "log_size": "Log Growth",
+    "stale_snapshot": "Stale Dated Snapshots",
     "stale_age": "Stale Pages (Age)",
-    "stale_source": "Stale Pages (Source Modified)",
     "invalid_lifecycle": "Invalid Lifecycle",
     "broken_superseded_by": "Broken Superseded-By",
     "superseded_by_archived": "Superseded-By Points to Archived",
@@ -1074,9 +1138,8 @@ def main() -> int:
     # Check 5: index consistency
     all_findings.extend(check_index_consistency(vault, content_pages, resolve))
 
-    # Check 6: hardcoded counts — DISABLED. The regex caught natural-language
-    # numbers (dates, ages, quantities) far more than real inventory tallies.
-    # all_findings.extend(check_hardcoded_counts(vault, content_pages))
+    # Check 6: sizes and snapshots (oversized pages, log growth, stale dated snapshots)
+    all_findings.extend(check_sizes_and_snapshots(vault, content_pages))
 
     # Check 7: stale content
     all_findings.extend(check_stale_content(vault, content_pages))

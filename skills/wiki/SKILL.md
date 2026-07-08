@@ -265,6 +265,7 @@ Companion skills (`../`):
 - **wiki-ingest** — Distill source documents into wiki pages
 - **wiki-query** — Answer questions against the wiki
 - **wiki-lint** — Audit and maintain wiki health
+- **wiki-compact** — Merge duplicates, archive stale pages, roll the log (the shrink side)
 - **wiki-update** — Push knowledge from any working project into the wiki
 - **wiki-capture** — Save the current conversation as a wiki page
 - **wiki-research** — Multi-round web research, auto-file results

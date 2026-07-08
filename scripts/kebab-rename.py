@@ -104,10 +104,10 @@ def build_path_mapping():
     mapping = {}
     for p in sorted(VAULT.rglob("*.md")):
         rel = p.relative_to(VAULT).as_posix()
-        if any(part.startswith(".") for part in rel.split("/")):
-            continue
-        if rel in {"index.md", "log.md", "CLAUDE.md", "AGENTS.md"}:
-            # scaffolding: keep these names
+        if any(part.startswith((".", "_")) for part in rel.split("/")):
+            continue  # dotdirs and _-dirs (_sources, _raw, _archives) are not wiki content
+        if rel.split("/")[-1] in {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}:
+            # scaffolding at any depth: keep these names — never slugify a README
             mapping[rel[:-3]] = rel[:-3]
             continue
         parent_parts = rel.split("/")[:-1]
