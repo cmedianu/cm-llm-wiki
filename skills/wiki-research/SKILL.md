@@ -14,7 +14,7 @@ You are running an autonomous research loop on a topic, synthesizing what you fi
 ## Before You Start
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand what's already in the wiki — don't re-research things the wiki covers well
+2. Survey what the wiki already covers so you don't re-research it — derive the page inventory from `.manifest.json` (or a `glob` + frontmatter scan), never by parsing `index.md` (it may be a base-backed query, not a page list)
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it surfaces recent context
 4. Check `$OBSIDIAN_VAULT_PATH/references/research-config.md` if it exists — it may define source preferences or domains to skip for this vault
 
@@ -73,64 +73,28 @@ If contradictions are minor or the topic feels well-covered after Round 2, skip 
 
 ## Filing — Write Wiki Pages
 
-Organize all findings into wiki pages across four output areas:
+Every page follows the **Page-Writing Protocol** in `wiki/SKILL.md` (frontmatter, `summary` < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks). Only the research-specific extras are called out below.
 
-### 1. sources/ — One page per major reference
+**Route to existing categories, discovered from disk.** List the vault's top-level folders (skip `_*` and `.*`) and file each page in the best-fitting **existing** folder — never scaffold a fixed `concepts/ entities/ references/` taxonomy the vault doesn't already have. Set each page's `category:` to the folder it lands in.
 
-For each significant source (typically 4-8 pages total):
+### Source-summary pages — one per major reference
 
-```yaml
----
-title: >-
-  <Source title>
-category: references
-tags: [<2-4 domain tags>]
-sources:
-  - "<URL>"
-source_url: "<URL>"
-created: <ISO-8601 timestamp>
-updated: <ISO-8601 timestamp>
-summary: >-
-  <1-2 sentences describing what this source covers, ≤200 chars>
-lifecycle: draft
-lifecycle_changed: <ISO date today>
----
-```
+For each significant source (typically 4-8), route to the vault's reference-like category if it has one, else the best-fitting folder. Add the research-specific field `source_url: "<URL>"` alongside the URL in `sources:`. Body: title, URL, what it covers, key claims (with provenance markers), limitations.
 
-Body: title, URL, what it covers, key claims (with provenance markers), limitations.
+### Concept pages — one per substantive concept
 
-### 2. concepts/ — One page per substantive concept
+For each significant concept surfaced across sources, route to the best-fitting existing folder. Link concepts to each other and to the source-summary pages.
 
-For each significant concept surfaced across sources:
+### Entity pages — tools, organizations, people
 
-Standard concept frontmatter + body. Link concepts to each other and to source pages.
+For each significant entity encountered (tools, libraries, companies, key authors), route to the best-fitting existing folder. Link back to the concepts that use the entity and the sources where it appears.
 
-### 3. entities/ — Tools, organizations, people
+### Master synthesis page
 
-For each significant entity encountered (tools, libraries, companies, key authors):
+The primary output: a structured synthesis of everything found, filed as `research-<topic-slug>.md` (kebab-case) in the vault's synthesis-like category if one exists, else the best-fitting folder. Set `title:` without a leading colon-space (e.g. `<Topic> research synthesis`) and `category:` to the folder it lands in. Add `research` to its tags. Body structure:
 
-Standard entity frontmatter. Link back to concepts that use the entity and sources where it appears.
-
-### 4. synthesis/Research: [Topic].md — Master synthesis
-
-The primary output: a structured synthesis of everything found.
-
-```yaml
----
-title: >-
-  Research: <Topic>
-category: synthesis
-tags: [<3-5 domain tags>, research]
-sources: [<list of source URLs or page paths>]
-created: <ISO-8601 timestamp>
-updated: <ISO-8601 timestamp>
-summary: >-
-  Synthesis of <N>-round research on <topic>. Covers <core findings in ≤200 chars>.
-lifecycle: draft
-lifecycle_changed: <ISO date today>
----
-
-# Research: <Topic>
+```markdown
+# <Topic> research synthesis
 
 ## Overview
 <2-4 sentence executive summary of what the research found>
@@ -158,24 +122,13 @@ After filing all pages:
 - Every source page should link to the concept pages it informed
 - The synthesis page should link to all concept, entity, and source pages produced
 
-Check `index.md` for existing pages on the same topics — merge into existing pages rather than creating duplicates.
+Check the page inventory (`.manifest.json`, or a `glob` + frontmatter scan) for existing pages on the same topics — merge into those rather than creating duplicates.
 
 ## Update Tracking Files
 
-**`.manifest.json`** — Add a `research` entry:
-```json
-{
-  "type": "research",
-  "topic": "<topic>",
-  "researched_at": "TIMESTAMP",
-  "rounds_completed": 3,
-  "sources_fetched": N,
-  "pages_created": ["..."],
-  "pages_updated": ["..."]
-}
-```
+**`.manifest.json`** — never hand-write it. After writing all pages, run `regen-manifest.py` to resync the manifest from disk (it preserves `ingested_at` and `private_paths`).
 
-**`index.md`** — Add all new pages under their respective sections.
+**`index.md`** — a base-backed index needs no edit; only a hand-curated one gets the new lines under their respective sections.
 
 **`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line (the research topic and its core finding); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
@@ -191,9 +144,9 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
 ## Quality Checklist
 
 - [ ] 3 rounds completed (or halted at sufficient depth)
-- [ ] Synthesis page exists at `synthesis/Research: [Topic].md`
+- [ ] Master synthesis page exists as `research-<topic-slug>.md` in the vault's synthesis-like category
 - [ ] Source pages written for major references
 - [ ] Concept and entity pages written for significant items
 - [ ] Contradictions flagged in synthesis page
 - [ ] All pages cross-linked
-- [ ] `index.md`, `log.md`, `hot.md`, `.manifest.json` updated
+- [ ] `log.md` / `hot.md` journaled via `wiki-journal.py`; `.manifest.json` resynced via `regen-manifest.py`; curated `index.md` updated (base-backed needs none)

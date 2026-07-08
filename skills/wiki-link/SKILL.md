@@ -19,7 +19,7 @@ You are weaving the wiki's knowledge graph tighter by finding and inserting miss
 ## Before You Start
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-2. Read `index.md` to get the full inventory of pages and their one-line descriptions
+2. Don't treat `index.md` as the page inventory — it may be a base-backed query that reads as source, not rows. The authoritative registry is the glob + frontmatter grep you build in Step 1; `index.md` is at most a curated hint about which pages the vault considers central.
 3. Skim the tail of `log.md` (last ~20 lines), or `hot.md`, to see what was recently ingested (focus linking effort on new pages) — don't read the whole append-only log
 
 When inserting links in Step 4, write them as vault-relative wikilinks (see Link Format in `wiki/SKILL.md`).
@@ -45,17 +45,22 @@ This is your "vocabulary" — every entry in this table is a valid wikilink targ
 
 ## Step 2: Scan for Missing Links
 
-For each page in the vault:
+Never read every page whole — that blind full-vault sweep is exactly what the Retrieval Primitives table exists to avoid. Instead, prefilter to candidates, then fan out per directory.
 
-1. **Read the full content**
-2. **Extract existing wikilinks** — find all `[[...]]` references already present
-3. **Search for unlinked mentions** — check if the page's text contains any of these, without being wrapped in `[[...]]`:
+**Prefilter (cheap).** For each target in the registry, grep the vault for its distinctive names — filename, title, aliases — plus a tag/summary overlap pass, to find the handful of pages that *plausibly* mention or relate to it. Only those candidates earn a full `Read`; the rest of the vault is never opened.
+
+**Per-directory fan-out.** Spawn one subagent per top-level category (discover the folders from disk), handing it its slice of the registry and the candidate lists that fell in its directory. Each subagent, for the candidate pages it was handed:
+
+1. **Reads full content** — only for those plausible candidates, not the whole slice
+2. **Extracts existing wikilinks** — all `[[...]]` references already present
+3. **Searches for unlinked mentions** — text that contains any of these without being wrapped in `[[...]]`:
    - Page filenames (e.g., the word "MyProject" appears but `[[projects/my-project/my-project]]` is missing)
    - Page titles from frontmatter
    - Aliases from frontmatter
    - Entity names, project names, concept names from the registry
+4. **Checks for semantic connections** — pages that share multiple tags or sit in the same project directory but don't link to each other
 
-4. **Check for semantic connections** — pages that share multiple tags or are in the same project directory but don't link to each other
+Collect each subagent's proposed links back at the top level for Step 3's judgement.
 
 ### Matching Rules
 
@@ -63,7 +68,7 @@ For each page in the vault:
 - **Diacritic-insensitive matching** — normalize both the page name and the body text with Unicode NFKD (decompose accented characters to base + combining marks, strip combining marks) before comparing. This ensures body text "Muller" matches page `[[entities/müller]]` and vice versa.
 - **Skip self-references** — a page shouldn't link to itself
 - **Skip common words** — don't link "the", "and", generic terms. Only match on distinctive names
-- **Prefer the shortest unambiguous wikilink path** — use `[[page-name]]` not `[[full/path/to/page-name]]` when the name is unique across the vault
+- **Always use full vault-relative paths** — `[[full/path/to/page-name]]`, never a bare `[[page-name]]`, per Link Format in `wiki/SKILL.md` (basenames aren't globally unique)
 - **Don't link inside code blocks** or frontmatter
 - **Don't double-link** — if `[[foo]]` already appears on the page, don't add another
 
@@ -110,6 +115,10 @@ If the term isn't mentioned naturally in the body but the pages are semantically
 
 If a `## Related` section already exists, append to it. Don't duplicate existing entries.
 
+### Privacy guard
+
+Don't leak a private-area page onto a more-public surface. Before adding a cross-link, check the target against `private_paths` (see `## Privacy & Visibility` in `wiki/SKILL.md`): never surface a private page's title or summary on a page — or index — outside its own privacy scope, e.g. don't add a `me/` page into a public page's `## Related` section. Linking *within* a private area, or from public → less-private only via the area's own section index, is fine.
+
 ## Step 5: Report
 
 Present a summary:
@@ -135,6 +144,8 @@ Present a summary:
 - `index.md`, `log.md` — special files
 - `_archives/*` — archived content
 ```
+
+Don't re-derive "Orphan Pages Remaining" by hand. Run `wiki-lint.py` (or `wiki-graph.py`) and consume its orphan list — those scripts compute orphans deterministically per the `## Orphans` definition in `wiki/SKILL.md` and are the source of truth.
 
 ## Step 6: Update Log and Hot Cache
 

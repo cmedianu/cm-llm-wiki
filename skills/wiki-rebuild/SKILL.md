@@ -23,27 +23,24 @@ You are performing a destructive operation on the wiki. Always archive first, al
 
 ## The Archive System
 
-Archives live at `$OBSIDIAN_VAULT_PATH/_archives/`. Each archive is a timestamped directory containing a full copy of the wiki state at that point.
+Archives live at `$OBSIDIAN_VAULT_PATH/_archives/`. Each archive is a timestamped directory containing a full copy of the wiki state at that point — every top-level **content** folder (all top-level dirs except `_*` and `.*`, discovered from disk), plus `index.md`, `log.md`, `hot.md`, `.manifest.json`, and `archive-meta.json`.
 
 ```
 $OBSIDIAN_VAULT_PATH/
 ├── _archives/
 │   ├── 2026-04-01T10-30-00Z/
 │   │   ├── archive-meta.json
-│   │   ├── concepts/
-│   │   ├── entities/
-│   │   ├── skills/
-│   │   ├── references/
-│   │   ├── synthesis/
-│   │   ├── journal/
-│   │   ├── projects/
+│   │   ├── <category-dir>/      ← every top-level content folder,
+│   │   ├── <category-dir>/         discovered from disk (not a fixed roster)
+│   │   ├── ...
 │   │   ├── index.md
 │   │   ├── log.md
+│   │   ├── hot.md
 │   │   └── .manifest.json
 │   └── 2026-03-15T08-00-00Z/
 │       └── ...
-├── concepts/          ← live wiki
-├── entities/
+├── <category-dir>/    ← live wiki
+├── <category-dir>/
 └── ...
 ```
 
@@ -72,11 +69,12 @@ When the user wants to snapshot the current state without rebuilding.
 ### Steps:
 
 1. Create archive directory: `_archives/YYYY-MM-DDTHH-MM-SSZ/`
-2. Copy all category directories, `index.md`, `log.md`, `.manifest.json`, and `projects/` into the archive
+2. Copy every top-level content folder (discovered from disk: all top-level dirs except `_*` and `.*`), plus `index.md`, `log.md`, `hot.md`, and `.manifest.json`, into the archive
 3. Write `archive-meta.json` with reason `"snapshot"`
-4. Append to `log.md`:
-   ```
-   - [TIMESTAMP] ARCHIVE reason="snapshot" pages=87 destination="_archives/2026-04-06T10-30-00Z"
+4. Record the event with `wiki-journal.py`:
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+     --log '<ARCHIVE reason="snapshot" pages=87 destination="_archives/2026-04-06T10-30-00Z">'
    ```
 5. Report: "Archived 87 pages. Current wiki is untouched."
 
@@ -90,12 +88,12 @@ Same as Mode 1 above, but with reason `"rebuild"`.
 
 ### Step 2: Clear live wiki
 
-Remove all content from the category directories (`concepts/`, `entities/`, `skills/`, etc.) and the `projects/` directory. Keep:
+Remove every top-level content folder (discovered from disk: all top-level dirs except the preserved ones below). Keep:
 - `_archives/` (obviously)
 - `.obsidian/` (Obsidian config)
 - `.claude/` (skills, scripts, conventions symlinks)
 
-Reset `index.md` to the empty template. Reset `log.md` with just the rebuild entry. Delete `.manifest.json` (it'll be recreated during ingest).
+Reset `index.md` to the empty template. Reset `log.md` and `hot.md` with just the rebuild entry. Delete `.manifest.json` (it'll be recreated during ingest).
 
 ### Step 3: Rebuild
 
@@ -103,9 +101,7 @@ Tell the user the vault is cleared and ready for a full re-ingest. They can now 
 
 1. `wiki-status` — to see all sources as "new"
 2. `wiki-claude-history` — to reprocess Claude history
-3. `codex-history-ingest` — to reprocess Codex session history
-4. `wiki-ingest` — to reprocess documents
-5. `data-ingest` — to reprocess any other data
+3. `wiki-ingest` — to reprocess documents
 
 Each of these will rebuild the manifest as they go.
 
@@ -113,9 +109,12 @@ Each of these will rebuild the manifest as they go.
 
 ### Step 4: Log the rebuild
 
-Append to `log.md`:
-```
-- [TIMESTAMP] REBUILD archived_to="_archives/2026-04-06T10-30-00Z" previous_pages=87
+Record the event with `wiki-journal.py` — a rebuild is a major state change, so also stamp `hot.md`:
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+  --log '<REBUILD archived_to="_archives/2026-04-06T10-30-00Z" previous_pages=87>' \
+  --hot-entry '**Wiki rebuilt from scratch.** Prior state archived to `_archives/2026-04-06T10-30-00Z`.' \
+  --hot-trim 3
 ```
 
 ## Mode 3: Restore from Archive
@@ -147,10 +146,11 @@ Before restoring, archive the current state (reason: `"pre-restore"`) so nothing
 
 1. Clear the live wiki (same as Mode 2, Step 2)
 2. Copy all content from the chosen archive back into the live wiki directories
-3. Restore `index.md`, `log.md`, and `.manifest.json` from the archive
-4. Append to `log.md`:
-   ```
-   - [TIMESTAMP] RESTORE from="_archives/2026-03-15T08-00-00Z" pages_restored=65
+3. Restore `index.md`, `log.md`, `hot.md`, and `.manifest.json` from the archive
+4. Record the event with `wiki-journal.py`:
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+     --log '<RESTORE from="_archives/2026-03-15T08-00-00Z" pages_restored=65>'
    ```
 
 ### Step 5: Report

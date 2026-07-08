@@ -15,7 +15,7 @@ You are preserving knowledge from the current conversation as a permanent wiki n
 ## Before You Start
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-2. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand existing wiki content (avoid duplicates)
+2. Enumerate existing pages to avoid duplicates — from `.manifest.json` or a `glob` + frontmatter grep, **not** by parsing `index.md` (it may be base-backed, i.e. a query source rather than a page list)
 3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it gives context on recent activity
 
 When writing internal links in Step 5, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
@@ -41,17 +41,19 @@ If nothing material emerged, tell the user and stop.
 
 ## Step 2: Classify the Content Type
 
-Assign one of five types — this determines the target folder and tone:
+Assign one of five types — this sets the **tone and body structure** (Step 5), not a fixed destination:
 
-| Type | Description | Target folder |
-|---|---|---|
-| `synthesis` | Multi-step analysis or an answer to a specific question that required reasoning | `synthesis/` |
-| `concept` | A definition, framework, or mental model (what a thing *is*) | `concepts/` |
-| `source` | Summary of an external document, article, or resource discussed | `references/` |
-| `decision` | A strategic, architectural, or design choice and its rationale | `synthesis/` |
-| `session` | A complete discussion summary when the conversation spans multiple topics | `journal/` |
+| Type | Description |
+|---|---|
+| `synthesis` | Multi-step analysis or an answer to a specific question that required reasoning |
+| `concept` | A definition, framework, or mental model (what a thing *is*) |
+| `source` | Summary of an external document, article, or resource discussed |
+| `decision` | A strategic, architectural, or design choice and its rationale |
+| `session` | A complete discussion summary when the conversation spans multiple topics |
 
-If the content clearly belongs to a specific project (detected from context or user mention), place it under `projects/<project-name>/<category>/` instead.
+**Pick the target folder from disk, not from the type.** List the vault's top-level folders (skip `_*`/`.*` dirs) and route the note into the best-fitting **existing** category; if the content clearly belongs to a project the vault tracks as its own folder, nest it there. If no folder fits, tell the user they may create one (or fall back to a general/misc folder if the vault has one). The `category:` frontmatter equals the chosen folder.
+
+**Privacy:** if the captured knowledge is private or sensitive — or belongs in a private area declared in `private_paths` — file it inside that private area and do not surface its title/summary in any more-public index. See **Privacy & Visibility** in `wiki/SKILL.md`.
 
 ## Step 3: Rewrite as Declarative Knowledge
 
@@ -62,10 +64,7 @@ Do **not** write a summary of the conversation. Write the knowledge itself, in d
 - Not: "We decided to use Y because..."
 - Yes: "Y is preferred over Z because [reason]. [^[inferred] if the rationale was implied, not stated explicitly]"
 
-Apply provenance markers per `wiki`:
-- *Extracted* — explicitly stated in the conversation (no marker)
-- *Inferred* — generalized or synthesized from the conversation → `^[inferred]`
-- *Ambiguous* — disputed, uncertain, or contradictory → `^[ambiguous]`
+Apply provenance markers per the **Page-Writing Protocol** in `wiki/SKILL.md` — for a conversation, a claim stated outright is extracted (no marker), one you generalized from the discussion is `^[inferred]`, and a disputed or uncertain one is `^[ambiguous]`.
 
 **Be concise.** Distil, don't pad. Prefer tight bullets over prose paragraphs; cut hedging,
 restatement, and throat-clearing. Every sentence must carry a fact the reader can't infer from the
@@ -84,28 +83,10 @@ Derive a clear, descriptive title from the content. Slugify it:
 
 ## Step 5: Write the Wiki Note
 
-Create the file at the target path with required frontmatter:
+Create the file at the target path and write it **per the Page-Writing Protocol in `wiki/SKILL.md`** (frontmatter fields, summary < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks, journal + manifest). Two capture-specific points:
 
-```yaml
----
-title: >-
-  <Title>
-category: <synthesis|concepts|references|journal|skills>
-tags: [<2-5 domain tags from taxonomy>]
-sources:
-  - conversation:<project>/<ISO-date>
-created: <ISO-8601 timestamp>
-updated: <ISO-8601 timestamp>
-summary: >-
-  <1-2 sentences, ≤200 chars, answering "what knowledge does this page hold?">
-lifecycle: draft
-lifecycle_changed: <ISO date today>
----
-```
-
-`<project>` in the source is the basename of the project directory the capture was run from (the
-current working directory's name, e.g. `ObsidianVault`), so provenance records *where* the
-conversation happened, not just when. Result: `conversation:ObsidianVault/2026-07-04`.
+- `category:` equals the folder chosen in Step 2.
+- `sources:` records the conversation as `conversation:<project>/<ISO-date>`, where `<project>` is the basename of the project directory the capture was run from (the current working directory's name, e.g. `ObsidianVault`) — so provenance records *where* the conversation happened, not just when. Result: `conversation:ObsidianVault/2026-07-04`.
 
 Body structure by type:
 
@@ -189,11 +170,13 @@ Body structure by type:
 <[[wikilinks]]>
 ```
 
-Every note must link to at least 2 existing wiki pages. Search `index.md` before writing. If fewer than 2 related pages exist, create minimal stubs for the most important concepts referenced.
+The Protocol's ≥2-wikilink rule applies. Find link targets by scanning `.manifest.json` or a `glob` + frontmatter grep (not `index.md`, which may be base-backed). If fewer than 2 related pages exist, create minimal stubs for the most important concepts referenced.
 
 ## Step 6: Update Tracking Files
 
-**`index.md`** — Add the new page under its category section.
+**`index.md`** — a base-backed index needs no edit (it lists pages live from frontmatter); only a hand-curated index gets a new line under its category section.
+
+**`.manifest.json`** — after writing, run `regen-manifest.py` to resync it from disk; never hand-edit it.
 
 **`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line; the script owns the timestamped log append, `hot.md` prepend/trim, and `updated:` bump:
 
@@ -210,7 +193,7 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
 
 Report the saved path and title:
 ```
-Saved to: projects/<name>/synthesis/<slug>.md
+Saved to: <category>/<slug>.md
 Title: <Title>
 Type: synthesis
 ```
@@ -218,8 +201,8 @@ Type: synthesis
 ## Quality Checklist
 
 - [ ] Content rewritten as declarative knowledge (not a chat transcript)
-- [ ] Type classified correctly; target path is in the right folder
-- [ ] Frontmatter complete with title, category, tags, sources, summary
-- [ ] At least 2 wikilinks to existing pages
-- [ ] `index.md`, `log.md`, and `hot.md` updated
+- [ ] Type classified correctly; target folder is an existing category discovered from disk
+- [ ] Body follows the per-type structure
+- [ ] Written per the Page-Writing Protocol (frontmatter, summary, provenance, ≥2 links, journal, manifest)
+- [ ] Private/sensitive content filed in its private area, not surfaced in a public index
 - [ ] Confirmed save path to user

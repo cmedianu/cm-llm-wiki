@@ -24,10 +24,11 @@ This skill can be invoked directly or via the `wiki-history-ingest` router (`/wi
 
 ### Append Mode (default)
 
-Check `.manifest.json` for each source file (conversation JSONL, memory file). Only process:
+Check `.manifest.json` for each source file (conversation JSONL, memory file) and classify it:
 
-- Files not in the manifest (new conversations, new memory files, new projects)
-- Files whose modification time is newer than their `ingested_at` in the manifest
+- **New** — source file not in the manifest (new conversations, new memory files, new projects).
+- **Modified** — in the manifest but its `size_bytes` or `mtime` differ from the recorded values.
+- **Skip** — in the manifest and unchanged.
 
 This is usually what you want — the user ran a few new sessions and wants to capture the delta.
 
@@ -62,6 +63,8 @@ Claude Code stores data in two locations. Scan **both**.
 ```
 
 ### Source 2: `~/Library/Application Support/Claude/local-agent-mode-sessions/` (Desktop app agent sessions)
+
+**Skip this whole source if the directory is absent.** It exists only on macOS with the desktop app installed — gate every command below on `[ -d "$HOME/Library/Application Support/Claude/local-agent-mode-sessions" ]` and, if it fails (non-macOS, or no desktop app), silently drop the entire Source-2 branch — do not error.
 
 The Claude desktop app stores local agent mode sessions here. The structure is deeply nested:
 
@@ -119,17 +122,16 @@ Glob: ~/.claude/projects/*/memory/*.md
 # Find conversation JSONL files
 Glob: ~/.claude/projects/*/*.jsonl
 
-# --- Source 2: Desktop app local-agent-mode sessions ---
+# --- Source 2: Desktop app local-agent-mode sessions (macOS only — skip if absent) ---
 DESKTOP_SESSIONS="$HOME/Library/Application Support/Claude/local-agent-mode-sessions"
-
-# Session metadata
-find "$DESKTOP_SESSIONS" -name "local_*.json" -maxdepth 4
-
-# Audit logs
-find "$DESKTOP_SESSIONS" -name "audit.jsonl"
-
-# Conversation transcripts
-find "$DESKTOP_SESSIONS" -name "*.jsonl" -path "*/.claude/projects/*"
+if [ -d "$DESKTOP_SESSIONS" ]; then
+  # Session metadata
+  find "$DESKTOP_SESSIONS" -name "local_*.json" -maxdepth 4
+  # Audit logs
+  find "$DESKTOP_SESSIONS" -name "audit.jsonl"
+  # Conversation transcripts
+  find "$DESKTOP_SESSIONS" -name "*.jsonl" -path "*/.claude/projects/*"
+fi
 ```
 
 Build a unified inventory and classify each file:
@@ -164,7 +166,19 @@ For each memory file:
 
 The `MEMORY.md` index file in each project is a quick summary — read it first to decide which individual memory files are worth reading in full.
 
-## Step 3: Parse Conversation JSONL
+## Step 3: Prefilter Conversation JSONL (required)
+
+Raw session `.jsonl` files are large and noisy — full of `thinking` blocks, `tool_use`/`tool_result` payloads, `progress` updates, and `file-history-snapshot` entries. **Never read a raw `.jsonl` whole into context.** First run a `jq` (or small script) pass that keeps only the user- and assistant-authored text, then read *only* that distilled output:
+
+```bash
+jq -rc 'select(.type=="user" or .type=="assistant")
+  | .message.content
+  | if type=="array" then (map(select(.type=="text").text) | join("\n")) else . end' session.jsonl
+```
+
+This drops `thinking`, `tool_use`, `progress`, and `file-history-snapshot` in one shot, leaving compact conversational text. Everything in the parsing steps below operates on that filtered output, not the original file.
+
+## Step 3a: Parse the Filtered Transcript
 
 Each JSONL file is one conversation session. Each line is a JSON object:
 
@@ -195,18 +209,9 @@ For assistant messages, `content` may be an array of content blocks:
 }
 ```
 
-**What to extract from conversations:**
+The Step 3 prefilter has already dropped `thinking`, `tool_use`, `progress`, and `file-history-snapshot` — you're reading the distilled user/assistant text, and you distill knowledge from that. Which project a conversation belongs to comes from its **file location**: the project directory name (e.g., `-Users-name-Documents-projects-my-app`) decodes to the project path. If you need the exact `cwd`, pull it with a separate one-line `jq` rather than reading the raw file.
 
-- Filter to `type: "user"` and `type: "assistant"` entries only
-- For assistant entries, extract `text` blocks (skip `thinking` and `tool_use` — those are noise)
-- The `cwd` field tells you which project this conversation belongs to
-- The project directory name (e.g., `-Users-name-Documents-projects-my-app`) tells you the project path
-
-**Skip these:**
-
-- `type: "progress"` — internal agent progress updates
-- `type: "file-history-snapshot"` — file state tracking
-- Subagent conversations (under `subagents/` subdirectories) — unless the user specifically asks
+Still skip subagent conversations (under `subagents/` subdirectories) unless the user specifically asks.
 
 ## Step 3b: Parse Audit Logs (desktop sessions only)
 
@@ -261,62 +266,33 @@ Each Claude project maps to a project directory in the vault. The project direct
 
 ### Project-specific vs. global knowledge
 
-| What you found                     | Where it goes               | Example                                             |
-| ---------------------------------- | --------------------------- | --------------------------------------------------- |
-| Project architecture decisions     | `projects/<name>/concepts/` | `projects/my-project/concepts/main-architecture.md` |
-| Project-specific debugging         | `projects/<name>/skills/`   | `projects/my-project/skills/api-rate-limiting.md`   |
-| General concept the user learned   | `concepts/` (global)        | `concepts/react-server-components.md`               |
-| Recurring problem across projects  | `skills/` (global)          | `skills/debugging-hydration-errors.md`              |
-| A tool/service used                | `entities/` (global)        | `entities/vercel-functions.md`                      |
-| Patterns across many conversations | `synthesis/` (global)       | `synthesis/common-debugging-patterns.md`            |
+**Route each piece of knowledge to the best-fitting existing category, discovered from disk** — list the vault's top-level folders (skipping `_*` and `.*` dirs) and match, rather than assuming any fixed taxonomy. The split is by *scope*:
+
+- **Project-specific** knowledge (architecture decisions, one project's debugging quirks) lives under `projects/<name>/<discovered-subcategory>/` — pick the sub-folder that already exists under that project, or the closest fit at the vault root.
+- **Global** knowledge (a general concept the user learned, a recurring cross-project problem, a tool or service used, a pattern spanning many conversations) routes to the best-matching existing top-level folder.
+
+Let the *kind* of memory guide the page kind: a general concept → a concept-style page; a recurring problem or workflow → a how-to/skill-style page; a tool or service → an entity-style page; a cross-conversation pattern → a synthesis-style page. But always land it in a folder the vault already has, not one you invent.
 
 For each project with content, create or update the project overview page at `projects/<name>/<name>.md` — **named after the project, not `_project.md`**. Obsidian's graph view uses the filename as the node label, so `_project.md` makes every project show up as `_project` in the graph. Naming it `<name>.md` gives each project a distinct, readable node name.
 
-**Important:** Distill the _knowledge_, not the conversation. Don't write "In a conversation on March 15, the user asked about X." Write the knowledge itself, with the conversation as a source attribution.
+Write each page per the **Page-Writing Protocol** in `wiki/SKILL.md` (frontmatter, `summary:` under 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks, journal, manifest) — don't restate those rules, follow them. Two history-specific points sit on top of the protocol:
 
-**Write a `summary:` frontmatter field** on every new/updated page — 1–2 sentences, ≤200 chars, answering "what is this page about?" for a reader who hasn't opened it. `wiki-query`'s cheap retrieval path reads this field to avoid opening page bodies.
+**Distill the _knowledge_, not the conversation.** Don't write "In a conversation on March 15, the user asked about X." Write the knowledge itself, with the conversation as a source attribution.
 
-**Add a `lifecycle` field** to every new page's frontmatter:
-```yaml
-lifecycle: draft
-lifecycle_changed: <ISO date today>
-```
-`lifecycle` is a qualitative, human-curated state (`draft`/`reviewed`/`living`/`archived`). On update, leave `lifecycle` and `lifecycle_changed` unchanged — only a human editor transitions it.
-
-**Mark provenance** per the convention in `wiki` (Provenance Markers section):
+**Provenance depends on which source a claim came from:**
 
 - **Memory files** are mostly extracted — the user wrote them by hand and they're already distilled. Treat memory-derived claims as extracted unless you're stitching together claims from multiple memory files.
 - **Conversation distillation** is mostly inferred. You're synthesizing a coherent claim from many turns of dialogue, often filling in implicit reasoning. Apply `^[inferred]` liberally to synthesized patterns, generalizations across sessions, and "what the user really meant" interpretations.
 - Use `^[ambiguous]` when the user changed their mind across sessions or when assistant and user contradicted each other and the resolution is unclear.
 
-The inline markers are the provenance signal — there is no numeric block to maintain.
-
 ## Step 6: Update Manifest, Journal, and Special Files
 
-### Update `.manifest.json`
+### Resync `.manifest.json`
 
-For each source file processed, add/update its entry with:
+Never hand-write the manifest. After all pages are written, run `regen-manifest.py` to rebuild `.manifest.json` from disk (it preserves `ingested_at` and `private_paths`):
 
-- `ingested_at`, `size_bytes`, `modified_at`
-- `source_type`: one of `"claude_conversation"`, `"claude_memory"`, `"claude_audit_log"`, `"claude_desktop_session"`
-- `project`: the decoded project name
-- `pages_created` and `pages_updated` lists
-
-Also update the `projects` section of the manifest:
-
-```json
-{
-  "project-name": {
-    "source_path": "~/.claude/projects/-Users-...",
-    "vault_path": "projects/project-name",
-    "last_ingested": "TIMESTAMP",
-    "conversations_ingested": 5,
-    "conversations_total": 8,
-    "memory_files_ingested": 3,
-    "desktop_sessions_ingested": 2,
-    "audit_logs_ingested": 2
-  }
-}
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py" --vault "$OBSIDIAN_VAULT_PATH"
 ```
 
 ### Create journal entry + update special files
@@ -333,6 +309,8 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
 **Active Threads** is semantic — the script won't touch it; edit it by hand with Edit if any ongoing project is now better understood.
 
 ## Privacy
+
+Apply the `private_paths` + `visibility/` guards from **`## Privacy & Visibility`** in `wiki/SKILL.md` before surfacing any distilled page. On top of that, conversation history has its own hazards:
 
 - Distill and synthesize — don't copy raw conversation text verbatim
 - Skip anything that looks like secrets, API keys, passwords, tokens

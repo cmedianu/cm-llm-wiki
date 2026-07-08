@@ -22,22 +22,36 @@ Optionally **register** the vault so it is selectable from other (non-wiki) proj
 
 ## Step 2: Create Vault Directory Structure
 
+First **ask the user which category scheme they want** — the top-level content folders *are* the categories, so this is the one real decision. Offer three equal options:
+
+- **(a) Domain folders** named after their own subjects (e.g. `cooking/`, `finance/`, `work/`) — best when the vault is about a known set of topics.
+- **(b) The Karpathy taxonomy** `concepts/ entities/ skills/ references/ synthesis/ journal/` — a ready-made general-purpose starter.
+- **(c) Their own list** — whatever folders they name.
+
+Then create the infrastructure dirs plus whichever **content** folders they chose:
+
 ```bash
 VAULT=<path-from-step-1>
-mkdir -p "$VAULT"/{concepts,entities,skills,references,synthesis,journal,projects,_archives,_sources,.obsidian}
-echo '{"version":1,"sources":{},"projects":{},"stats":{}}' > "$VAULT/.manifest.json"
+CONTENT=(...)   # the folders the user chose in step 2
+mkdir -p "$VAULT"/.obsidian "$VAULT"/_archives "$VAULT"/_sources
+for c in "${CONTENT[@]}"; do mkdir -p "$VAULT/$c"; done
+printf '{"version":1,"vault_path":"%s","created":"%s","updated":"%s","sources":{}}\n' \
+  "$VAULT" "$(date -u +%FT%TZ)" "$(date -u +%FT%TZ)" > "$VAULT/.manifest.json"
 ```
 
-The `.manifest.json` is the canonical vault marker — its presence is what every skill walks up the CWD looking for.
+The `.manifest.json` is the canonical vault marker — its presence is what every skill walks up the CWD looking for. The minimal seed above is enough; `private_paths` gets added later if the vault grows a private area, and you can always re-derive the manifest from disk with `regen-manifest.py` once folders and pages exist.
 
 - `.obsidian/` — Obsidian's own config. Creates vault recognition.
-- `projects/` — Per-project knowledge (populated during ingest).
 - `_archives/` — Stores wiki snapshots for rebuild/restore operations.
-- `_raw/` — Staging area for unprocessed drafts. Drop rough notes here; `wiki-ingest` will promote them to proper wiki pages and delete the originals.
+- `_sources/` — Raw inputs staged for ingest.
+- `_raw/` — Optional staging area for unprocessed drafts. Drop rough notes here; `wiki-ingest` will promote them to proper wiki pages and delete the originals.
+- `projects/` — Optional; created on demand when `wiki-ingest` files per-project knowledge. Not part of the mandatory scaffold.
 
 ## Step 3: Create Special Files
 
 ### index.md
+
+A minimal catalog whose `##` sections mirror the folders the user actually chose in Step 2 — one heading per content folder, in the same order. (For a hands-off index, a base-backed Obsidian query per the wiki conventions works too, and needs no editing as pages are added.)
 
 ```markdown
 ---
@@ -48,20 +62,16 @@ title: Wiki Index
 
 *This index is automatically maintained. Last updated: TIMESTAMP*
 
-## Concepts
+## <Category One>
 
 *No pages yet. Use `wiki-ingest` to add your first source.*
 
-## Entities
+## <Category Two>
 
-## Skills
-
-## References
-
-## Synthesis
-
-## Journal
+<!-- one ## section per content folder chosen in Step 2 -->
 ```
+
+Entries added later follow the vault format — put a space after `(` before tags, e.g. `- [[page]] ( #tag )`.
 
 ### log.md
 
@@ -72,7 +82,7 @@ title: Wiki Log
 
 # Wiki Log
 
-- [TIMESTAMP] INIT vault_path="OBSIDIAN_VAULT_PATH" categories=concepts,entities,skills,references,synthesis,journal
+- [TIMESTAMP] INIT vault_path="OBSIDIAN_VAULT_PATH" categories=<the folders chosen in Step 2, comma-separated>
 ```
 
 ### hot.md
@@ -137,7 +147,7 @@ Tell the user about these recommended community plugins (they install manually):
 ## Step 6: Verify Setup
 
 Run a quick sanity check:
-- [ ] Vault directory exists with: `concepts/`, `entities/`, `skills/`, `references/`, `synthesis/`, `journal/`, `projects/`, `_archives/`, `_sources/`
+- [ ] Vault directory exists with: the content folders you chose in Step 2, plus `_archives/`, `_sources/`, `.obsidian/`
 - [ ] `.manifest.json` exists at vault root (the canonical vault marker)
 - [ ] `index.md` exists at vault root
 - [ ] `log.md` exists at vault root
@@ -150,5 +160,4 @@ Report the results and tell the user they can now:
 2. Run `wiki-status` to see what's available to ingest
 3. Run `wiki-ingest` to add their first sources
 4. Run `wiki-claude-history` to mine their Claude conversations
-5. Run `codex-history-ingest` to mine their Codex sessions (if they use Codex)
-6. Run `wiki-status` again anytime to check the delta
+5. Run `wiki-status` again anytime to check the delta

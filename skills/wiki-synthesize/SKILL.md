@@ -15,9 +15,10 @@ You are scanning the wiki for concepts that co-occur across many pages but have 
 ## Before You Start
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-2. Read `index.md` to get the full page inventory.
-3. Read `hot.md` if it exists — it surfaces recent activity and active threads that may already point to synthesis opportunities.
-4. Read `_meta/taxonomy.md` to understand the tag vocabulary.
+2. Read `hot.md` if it exists — it surfaces recent activity and active threads that may already point to synthesis opportunities.
+3. Read `_meta/taxonomy.md` to understand the tag vocabulary.
+
+The page inventory comes from Step 1's direct disk scan (glob + frontmatter), not from `index.md` — that file may be a base-backed query, not a page list.
 
 When writing internal links in synthesis pages, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
@@ -35,7 +36,7 @@ Build a co-occurrence matrix: for every pair of concept/entity pages (A, B), cou
 You don't need to be exhaustive — aim for the top 20-30 pairs by co-occurrence score. Use Grep to find backlinks efficiently:
 
 ```bash
-grep -rl "\[\[ConceptA\]\]" "$OBSIDIAN_VAULT_PATH" --include="*.md"
+grep -rl "\[\[concepts/concept-a\]\]" "$OBSIDIAN_VAULT_PATH" --include="*.md"
 ```
 
 Run this for your top candidate concepts and intersect the result sets.
@@ -61,21 +62,12 @@ Write the few strongest — aim for ~5. If the user asked for a specific topic (
 
 ## Step 4: Draft Synthesis Pages
 
-For each top candidate, create a page in `synthesis/` using this template:
+For each top candidate, create a page in the vault's **synthesis category** following the **Page-Writing Protocol** in `wiki/SKILL.md` (frontmatter contract, summary limit, lifecycle, provenance, journal, manifest). Synthesis-specific on top of that:
+
+- **Title is `<Concept A> × <Concept B>`** — the `×` signals a synthesis page, not a page about either concept alone. Set `category` to the vault's synthesis category and `sources:` to every page that links to both concepts.
+- **Body structure:**
 
 ```markdown
----
-title: <Concept A> × <Concept B>
-category: synthesis
-tags: [<shared tags>, <domain tags>]
-sources: [<all pages that link to both>]
-created: TIMESTAMP
-updated: TIMESTAMP
-summary: "Cross-cutting synthesis of how <A> and <B> interact, with implications for <domain>."
-lifecycle: draft
-lifecycle_changed: TIMESTAMP_DATE
----
-
 # <Concept A> × <Concept B>
 
 ## The Connection
@@ -100,21 +92,20 @@ lifecycle_changed: TIMESTAMP_DATE
 
 ## Related
 
-- [[<Concept A>]]
-- [[<Concept B>]]
-- [[<other related pages>]]
+- [[<category>/<concept-a>]]
+- [[<category>/<concept-b>]]
+- [[<full/path/to/other-related-page>]]
 ```
 
-**Synthesis pages are mostly `^[inferred]`.** You are drawing connections across sources — that's synthesis by definition. Apply `^[inferred]` to cross-cutting conclusions and `^[ambiguous]` where sources disagree.
-
-**The title format is `A × B`** — this signals to readers that it's a synthesis page, not a page about either concept alone.
+- **Synthesis pages are mostly `^[inferred]`.** You are drawing connections across sources — that's synthesis by definition. Apply `^[inferred]` to cross-cutting conclusions and `^[ambiguous]` where sources disagree.
+- **Privacy.** If any source page lives under a `private_paths` prefix, the synthesis is itself private-scoped — file it inside that private area, or exclude those sources. Never surface a private page's title or summary in a public synthesis page or a more-public index. See **Privacy & Visibility** in `wiki/SKILL.md`.
 
 ## Step 5: Back-link from Source Pages
 
 For each synthesis page you created, add a link to it from the two (or more) concept pages it synthesizes. In the concept page, add to its `## Related` section:
 
 ```markdown
-- [[Concept A × Concept B]] — synthesis
+- [[synthesis/concept-a-x-concept-b]] — synthesis
 ```
 
 If the concept page has no `## Related` section, add one at the bottom.
@@ -126,14 +117,14 @@ After creating pages for the top 5, list the next 10 candidates in your output �
 Format:
 ```
 Skipped (consider next time):
-- [[Caching]] × [[Consistency]] — co-occurs in 4 pages, cross-domain
-- [[Testing]] × [[Observability]] — co-occurs in 3 pages, shares tags
+- [[concepts/caching]] × [[concepts/consistency]] — co-occurs in 4 pages, cross-domain
+- [[concepts/testing]] × [[concepts/observability]] — co-occurs in 3 pages, shares tags
 ...
 ```
 
 ## Step 7: Update Special Files
 
-**`index.md`** — Add entries for all new synthesis pages.
+**`index.md`** — a base-backed index needs no edit (it lists synthesis pages live from their frontmatter); only a hand-curated index gets one new line per synthesis page.
 
 **`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line (e.g. "Synthesized 5 cross-cutting pages: Caching × Consistency, Testing × Observability, …"); the script owns the timestamped log append, `hot.md` prepend/trim to the newest 3, and `updated:` bump:
 
@@ -148,12 +139,11 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
 
 ## Quality Checklist
 
-- [ ] Every synthesis page has a `summary:` field (≤200 chars)
+- [ ] Every synthesis page follows the Page-Writing Protocol (frontmatter, summary limit, ≥2 full-path wikilinks)
 - [ ] Every synthesis page links back to its source concepts
 - [ ] Source concept pages link forward to the synthesis page
 - [ ] No synthesis page just restates what's already on the source pages — it must add a cross-cutting insight
-- [ ] `index.md` and `log.md` updated
-- [ ] `hot.md` updated
+- [ ] Curated `index.md` updated (base-backed needs none); `log.md`/`hot.md` journaled via `wiki-journal.py`
 
 ## Tips
 

@@ -17,7 +17,7 @@ You are answering questions against a compiled Obsidian wiki, not raw source doc
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. If `$OBSIDIAN_VAULT_PATH/hot.md` exists, read it first — it gives you instant context on recent activity. If the user's question is about something ingested recently, hot.md may answer it before you even open `index.md`.
-3. Read `$OBSIDIAN_VAULT_PATH/index.md` to understand the wiki's scope and structure
+3. Skim `$OBSIDIAN_VAULT_PATH/index.md` for scope and structure — a cheap orienting hint *when it's hand-curated*, but never a guaranteed inventory: a base-backed index reads as a query source, not a list of pages. The authoritative candidate source is the frontmatter grep in Step 2, not this file.
 
 ## Visibility Filter (optional)
 
@@ -54,8 +54,8 @@ Also decide the **mode**:
 
 Build a candidate set *without opening any page bodies*:
 
-- You've already read `index.md` above — use it as the first filter. It lists every page with a one-line description and tags.
-- Use `Grep` to scan page **frontmatter only** for title, tag, alias, and summary matches. A pattern like `^(title|tags|aliases|summary):` scoped to vault `.md` files is far cheaper than content grep.
+- Use `Grep` to scan page **frontmatter only** for title, tag, alias, and summary matches — this is the authoritative candidate source. A pattern like `^(title|tags|aliases|summary):` scoped to vault `.md` files is far cheaper than content grep.
+- If `index.md` is hand-curated, the descriptions you skimmed above are a useful extra filter — but don't rely on it as a complete list; a base-backed index enumerates nothing when read as raw markdown, so the frontmatter grep is what actually finds the candidates.
 - Collect the top 5–10 candidate page paths ranked by:
   1. Exact title or alias match
   2. Tag match
@@ -111,9 +111,10 @@ Pages with no lifecycle field (legacy pages predating the schema) are treated th
 
 ### Step 6: Log the Query
 
-Append to `log.md`:
-```
-- [TIMESTAMP] QUERY query="the user's question" result_pages=N mode=normal|index_only|filtered escalated=true|false
+Log the query via `wiki-journal.py` — `--log` only (a query isn't a hot-cache-worthy write). Log a coarse **topic slug** (a short kebab-case topic derived from the question), never the verbatim question — the log is shareable scope:
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'QUERY topic=<short-kebab-topic> result_pages=N mode=normal|index_only|filtered escalated=true|false'
 ```
 
 ## Answer Format

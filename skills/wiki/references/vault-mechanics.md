@@ -119,7 +119,7 @@ Snapshot conventions:
 - Path: `_sources/web/<slug>.md`
 - Slug: kebab-case, derived from `<domain>-<title-or-slug>-<year>`, e.g. `martinfowler-microservices-2014.md`, `instructables-carbon-quantum-dots-2019.md`
 - Format: Markdown preferred (clean grep target). HTML alongside (`<slug>.html`) only when conversion loses important structure. PDFs unchanged.
-- Manifest entry keyed by the snapshot path, with `source_type: "url"`, `source_url:`, `fetched_at:`, `content_hash:`.
+- Manifest entry keyed by the snapshot path, written by `regen-manifest.py` like any other source (never hand-edited); record the original URL and fetch date in the snapshot page's own frontmatter (`source_url:`, `fetched:`).
 
 `wiki-lint` flags URL-only `sources:` entries that 404 and downgrades dependent claims to `^[ambiguous]` until a snapshot is added.
 

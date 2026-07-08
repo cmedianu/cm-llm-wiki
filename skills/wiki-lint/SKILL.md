@@ -87,9 +87,10 @@ Propose fixes for the script's findings and your semantic findings. Apply the sa
 
 ## After Linting
 
-Append to `log.md`:
-```
-- [TIMESTAMP] LINT errors=E warnings=W (orphans=O broken=B stale=S …)
+Record the run with `wiki-journal.py` (don't hand-edit `log.md`):
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'LINT errors=E warnings=W (orphans=O broken=B stale=S …)'
 ```
 
 Offer to fix issues automatically or let the user decide which to address.

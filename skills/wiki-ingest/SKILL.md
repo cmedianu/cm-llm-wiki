@@ -17,7 +17,7 @@ You are ingesting source documents into an Obsidian wiki. Your job is not to sum
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
 2. Read `.manifest.json` at the vault root to check what's already been ingested
-3. Read `index.md` to understand current wiki content
+3. Derive current wiki content from `.manifest.json` (the page inventory) or a `glob` + frontmatter scan — never by parsing `index.md`, which may be a base-backed Obsidian query rather than a page list
 4. Read the tail of `log.md` (last ~20 lines), or `hot.md`, for recent activity — `log.md` is append-only and unbounded, so never read it whole
 
 When writing internal links in Step 5, apply the link format described in `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
@@ -39,16 +39,13 @@ This applies to all ingest modes and all source formats.
 This skill supports three modes. Ask the user or infer from context:
 
 ### Append Mode (default)
-Only ingest sources that are **new or modified** since last ingest. Check the manifest using both timestamp **and content hash**:
+Only ingest sources that are **new or modified** since last ingest. Delta comes from the manifest entry (keyed by `source_path`), comparing the file's current `size_bytes` and `mtime`:
 
-- If a source path is not in `.manifest.json` → it's new, ingest it
-- If a source path is in `.manifest.json`:
-  - Compute the file's SHA-256 hash: `sha256sum -- "<file>"` (or `shasum -a 256 -- "<file>"` on macOS). Always double-quote the path and use `--` to prevent filenames with special characters or leading dashes from being interpreted by the shell.
-  - If the hash matches `content_hash` in the manifest → **skip it**, even if the modification time differs (file was touched but content is identical — git checkout, copy, NFS timestamp drift)
-  - If the hash differs → it's genuinely modified, re-ingest it
-- If a source path is in `.manifest.json` and has no `content_hash` (older entry) → fall back to mtime comparison as before
+- If a source path is not in `.manifest.json` → it's **new**, ingest it
+- If it is in `.manifest.json` but its current `size_bytes` **or** `mtime` differs from the recorded entry → it's **modified**, re-ingest it
+- Otherwise → unchanged, **skip it**
 
-This is the right choice most of the time. It's fast and avoids redundant work even when timestamps are unreliable.
+This is the right choice most of the time — it's fast and avoids redundant work.
 
 ### Full Mode
 Ingest everything regardless of manifest state. Use when:
@@ -133,9 +130,11 @@ You'll apply markers in Step 5. Don't conflate these — the wiki's value depend
 
 ### Step 3: Determine Project Scope
 
+**Categories are discovered from disk** — list the vault's top-level folders (skipping `_*` and `.*` dirs) and route each page into the best-fitting **existing** category. Never assume a fixed taxonomy.
+
 If the source belongs to a specific project:
-- Place project-specific knowledge under `projects/<project-name>/<category>/`
-- Place general knowledge in global category directories
+- Place project-specific knowledge under `projects/<project-name>/<category>/`, where `<category>` is a discovered category folder
+- Place general knowledge in the matching global category directories
 - Create or update the project overview at `projects/<name>/<name>.md` (named after the project — never `_project.md`, as Obsidian uses filenames as graph node labels)
 
 If the source is not project-specific, put everything in global categories.
@@ -143,40 +142,18 @@ If the source is not project-specific, put everything in global categories.
 ### Step 4: Plan Updates
 
 Before writing anything, plan which pages to update or create. Don't steer toward a page count — the number is an *emergent result* of two things, not a target: **depth** (how many facts you capture) and **atomicity** (one concept per page). Let the source's density set the count. A count is only a sanity check: one page from a rich source means you under-split; many pages from a thin one means you over-split. For each:
-- Does this page already exist? (Check `index.md` and use Glob to search `OBSIDIAN_VAULT_PATH`)
+- Does this page already exist? (Check `.manifest.json` or `glob` + frontmatter grep across `OBSIDIAN_VAULT_PATH` — not `index.md`, which may be a base-backed query)
 - If it exists, what new information does this source add?
-- If it's new, which category does it belong in?
+- If it's new, which existing category (discovered by listing the vault's top-level folders, skipping `_*`/`.*`) does it best fit?
 - What `[[wikilinks]]` should connect it to existing pages?
 
 ### Step 5: Write/Update Pages
 
-For each page in your plan:
+Write or update each page **per the Page-Writing Protocol in `wiki/SKILL.md`** — that section owns the frontmatter template, the `summary:` <200-char rule, the `lifecycle: draft` block, provenance markers, the ≥2-wikilink rule, and the journal/manifest calls. Ingest is an ingest-class skill, so it sets `lifecycle: draft`. The rest of this step is what's specific to *ingest*.
 
-**If creating a new page:**
-- Use the page template from the wiki skill (frontmatter + sections)
-- Place in the correct category directory
-- Add `[[wikilinks]]` to at least 2-3 existing pages
-- Include the source in the `sources` frontmatter field
-
-**If updating an existing page:**
-- Read the current page first
-- Merge new information — don't just append
-- Update the `updated` timestamp in frontmatter
-- Add the new source to the `sources` list
-- Resolve any contradictions between old and new information (note them if unresolvable)
+**Merge, don't append.** When a page already exists, read it first and fold the new information into it — don't tack a new section onto the end. Update `sources` with the new source, and resolve any contradiction between old and new content (note it inline if unresolvable).
 
 **Write concisely — at every depth.** Distil, don't pad. Prefer tight bullets over prose paragraphs; cut hedging, restatement, and throat-clearing. Every sentence must carry a fact the reader can't infer from the others. If it can be said in a clause, don't spend a sentence; if a section is empty, omit it. Concision is *density* (no filler per fact) and is always on; it is independent of depth, which is *coverage* (how many facts across how many pages). A comprehensive ingest is many tight pages, never long-winded ones.
-
-**Write a `summary:` frontmatter field** on every new page (1–2 sentences) answering "what is this page about?" for a reader who hasn't opened it. **HARD LIMIT — the summary MUST be under 200 characters.** Count the characters before you write the field; if it is 200 or more, cut it down until it fits (drop clauses, not meaning). `wiki-lint` fails any summary of 200+ chars, so an oversized summary is a guaranteed lint error — never emit one. When updating an existing page whose meaning has shifted, rewrite the summary to match the new content and re-check the length. This field is what `wiki-query`'s cheap retrieval path reads — a missing or stale summary forces expensive full-page reads.
-
-**Add a `lifecycle` field** to every new page's frontmatter:
-
-```yaml
-lifecycle: draft
-lifecycle_changed: "<ISO date today>"
-```
-
-`lifecycle` is a qualitative, human-curated state — one of `draft` / `reviewed` / `living` / `archived`. Ingest sets `draft`; only the human editor promotes it. Leave it unchanged on update.
 
 **Apply a `visibility/` tag** if the content clearly warrants one (optional):
 - `visibility/internal` — architecture internals, system credentials patterns, team-only context
@@ -185,12 +162,7 @@ lifecycle_changed: "<ISO date today>"
 
 `visibility/` tags are system tags and do **not** count toward the 5-tag limit. When in doubt, omit — untagged pages are treated as public. Never add a visibility tag just because a topic sounds technical.
 
-**Apply provenance markers** per the convention in `wiki` (Provenance Markers section):
-- Inferred claims get a trailing `^[inferred]`
-- Ambiguous/contested claims get a trailing `^[ambiguous]`
-- Extracted claims need no marker
-
-These inline markers are the provenance signal — there is no numeric summary to maintain.
+**Respect privacy scope** per **Privacy & Visibility** in `wiki/SKILL.md`. Read `private_paths` from `.manifest.json`: a page filed under a private area must never have its title or summary surfaced in a more-public `index.md`, and a synthesis page drawing on private sources is itself private-scoped.
 
 ### Step 6: Update Cross-References
 
@@ -198,48 +170,28 @@ After writing pages, check that wikilinks work in both directions. If page A lin
 
 ### Step 7: Update Manifest and Special Files
 
-**`.manifest.json`** — For each source file ingested, add or update its entry:
-```json
-{
-  "ingested_at": "TIMESTAMP",
-  "size_bytes": FILE_SIZE,
-  "modified_at": FILE_MTIME,
-  "content_hash": "sha256:<64-char-hex>",
-  "source_type": "document",  // or "image" for png/jpg/webp/gif and image-only PDFs
-  "project": "project-name-or-null",
-  "pages_created": ["list/of/pages.md"],
-  "pages_updated": ["list/of/pages.md"]
-}
+**`.manifest.json`** — never hand-write it. After writing pages, run `regen-manifest.py` to resync the manifest from disk (it preserves `ingested_at` and `private_paths`):
+
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py" --vault "$OBSIDIAN_VAULT_PATH"
 ```
-`content_hash` is the SHA-256 of the file contents at ingest time. Always write it — it's the primary skip signal on subsequent runs.
 
-Also update `stats.total_sources_ingested` and `stats.total_pages`.
+**`index.md`** — a base-backed index needs **no** edit (it lists pages live from their frontmatter). Only a hand-curated index gets a new line per created page; check which kind it is before touching it.
 
-If the manifest doesn't exist yet, create it with `version: 1`.
-
-**`index.md`** — Add entries for any new pages, update summaries for modified pages.
-
-**`log.md` and `hot.md` — don't hand-edit; drive the mechanical parts with `wiki-journal.py`.**
-The *distillation* is yours (compose the one-sentence Recent-Activity bullet as the
-*conceptual* change, not a file list — e.g. "Ingested Fowler's microservices article —
-3 new concept pages on service decomposition, API gateway, bounded contexts"). The script
-owns the plumbing: timestamped log append, prepending the entry, trimming to the newest N,
-`updated:` bump, and creating `hot.md` from template if missing. One call does both files:
+**`log.md` and `hot.md`** — don't hand-edit; drive both with one `wiki-journal.py` call
+(see the Page-Writing Protocol in `wiki/SKILL.md`). You compose only the one-line
+Recent-Activity bullet as the *conceptual* change, not a file list — e.g. "Ingested Fowler's
+microservices article — new concept pages on service decomposition, API gateway, bounded contexts":
 
 ```bash
 uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --log 'INGEST source="path/to/source" pages_updated=N pages_created=M mode=append' \
-  --hot-entry '**One-line conceptual change.** Detail with [[wikilinks]].' \
+  --hot-entry '**One-line conceptual change.** Detail with [[full/path/wikilinks]].' \
   --hot-trim 3
 ```
 
-- Pass `--log` alone to append only the log line; `--hot-entry` alone to touch only hot.md.
-- The log verb is free text (`INGEST`, `CAPTURE`, `FIX`, …); the timestamp is added for you
-  (`--date-only` for a date-only stamp).
-- `--hot-trim 3` keeps Recent Activity to the last 3 operations. Only a top-level `## ` heading
-  bounds the section, so a `## Tooling …` subsection below is preserved.
-- **Key Takeaways / Active Threads / Flagged Contradictions are semantic** — the script doesn't
-  touch them. If the ingest materially shifted one, edit it yourself with Edit.
+**Key Takeaways / Active Threads / Flagged Contradictions are semantic** — the script doesn't
+touch them. If the ingest materially shifted one, edit it yourself with Edit.
 
 ## Handling Multiple Sources
 
@@ -248,11 +200,12 @@ When ingesting a directory, process sources one at a time but maintain a running
 ## Quality Checklist
 
 After ingesting, verify:
-- [ ] Every new page has frontmatter with title, category, tags, sources
+- [ ] Every new page has frontmatter with title, category (a discovered folder), tags, sources
 - [ ] Every new page has at least 2 wikilinks to existing pages
-- [ ] No orphaned pages (pages with zero incoming links)
-- [ ] `index.md` reflects all changes
-- [ ] `log.md` has the ingest entry
+- [ ] No orphaned pages — per the `## Orphans` definition in `wiki/SKILL.md` (no incoming links from other content pages; run `wiki-lint.py` to confirm)
+- [ ] `.manifest.json` resynced with `regen-manifest.py`
+- [ ] Journal recorded via `wiki-journal.py` (not hand-edited)
+- [ ] Any hand-curated `index.md` updated (base-backed indexes need no edit)
 - [ ] Source attribution is present for every new claim
 - [ ] Inferred and ambiguous claims are marked with `^[inferred]` / `^[ambiguous]`
 - [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, **under 200 chars — count it; hard limit, `wiki-lint` fails 200+**)

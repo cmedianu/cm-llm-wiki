@@ -14,8 +14,8 @@ You are distilling knowledge from the current project into the user's Obsidian w
 ## Before You Start
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-3. Read `$OBSIDIAN_VAULT_PATH/.manifest.json` to check if this project has been synced before.
-4. Read `$OBSIDIAN_VAULT_PATH/index.md` to know what the wiki already contains.
+2. **Discover categories from disk** — `ls` the vault root (skip `_*` and `.*` dirs); the top-level folders *are* the categories. Never assume a fixed taxonomy.
+3. **Check whether this project is already in the vault** — glob `$OBSIDIAN_VAULT_PATH/projects/<project-name>/` and/or grep the pages' `sources:` frontmatter for the project. Don't parse `index.md` for this — it may be a base-backed query, not a page list; derive inventory from `.manifest.json` or a `glob` + frontmatter grep instead.
 
 When writing internal links in Steps 4–5, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
 
@@ -33,12 +33,12 @@ Derive a clean project name from the directory name.
 
 ## Step 2: Compute the Delta
 
-Check `.manifest.json` for this project:
+There is no per-project tracking in the manifest, so bound the delta from what's already on disk:
 
-- **First time?** Full scan. Everything is new.
-- **Synced before?** Look at `last_commit_synced`. Only consider what changed since then. Use `git log <last_commit>..HEAD --oneline` to see what's new.
+- **First-time sync?** (the existence check in *Before You Start* found no vault pages for this project) → full scan. Everything is new.
+- **Re-sync?** Find the newest `updated:` timestamp across this project's existing vault pages and only consider what changed since then: `git log --since="<that date>" --oneline`. If the user supplied a ref, bound with `git log <ref>..HEAD --oneline` instead.
 
-If nothing meaningful changed since last sync, tell the user and stop.
+Focus on commit messages that signal decisions, not "fix typo" churn. If nothing meaningful changed since last sync, tell the user and stop.
 
 ## Step 3: Decide What to Distill
 
@@ -65,79 +65,34 @@ The heuristic: **if reading the codebase answers the question, don't wiki it. If
 
 ## Step 4: Distill into Wiki Pages
 
+Write each page per the **Page-Writing Protocol** in `wiki/SKILL.md` (frontmatter, summary <200 chars, provenance markers, ≥2 wikilinks, privacy, journal, manifest). This step covers only what's specific to a project sync: where pages go and how to map code/commits to provenance.
+
 ### Project-specific knowledge
 
-Goes under `$VAULT/projects/<project-name>/`:
+Goes under `$VAULT/projects/<project-name>/`, with an overview page plus discovered subcategories:
 
-```
-projects/<project-name>/
-├── <project-name>.md          ← project overview (named after the project, NOT _project.md)
-├── concepts/                  ← project-specific ideas, architectures
-├── skills/                    ← project-specific how-tos, patterns
-└── references/                ← project-specific source summaries
-```
-
-The overview page (`<project-name>.md`) should have:
-- What the project is (one paragraph)
-- Key concepts and how they connect
-- Links to project-specific and global wiki pages
+- `projects/<project-name>/<project-name>.md` — the overview page (named after the project, **never** `_project.md`): what the project is (one paragraph), its key concepts and how they connect, and links out to the project-specific and global pages.
+- `projects/<project-name>/<subcategory>/…` — group the rest into whatever subcategories fit the project (e.g. an architecture concept, a how-to pattern, a source summary). Reuse subfolders that already exist under this project; don't impose a fixed set.
 
 ### Global knowledge
 
-Things that aren't project-specific go in the global categories:
+Anything that isn't project-specific is general knowledge — route it to the **best-fitting existing category** discovered by listing the vault root (Step 2 of *Before You Start*), not to an assumed taxonomy. A general concept, a reusable technique, a tool or person each belong wherever the vault already keeps that kind of page. If genuinely nothing fits, `mkdir` a new top-level category rather than forcing a page into the wrong folder.
 
-| What you found | Where it goes |
-|---|---|
-| A general concept learned | `concepts/` |
-| A reusable pattern or technique | `skills/` |
-| A tool/service/person | `entities/` |
-| Cross-project analysis | `synthesis/` |
+### Provenance for code
 
-### Page format
+Apply the markers per the Page-Writing Protocol, mapped to a codebase:
 
-Every page needs YAML frontmatter:
+- **Extracted** *(no marker)* — anything visible in the code, config, or a doc/commit message: file structure, dependencies, function signatures, what a file does.
+- **Inferred** `^[inferred]` — *why* a decision was made, design rationale, trade-offs, "the team chose X because Y" — unless a commit message, doc, or ADR states it explicitly.
+- **Ambiguous** `^[ambiguous]` — when the code and docs disagree, or when there's clearly an in-progress migration with two patterns living side by side.
 
-```markdown
----
-title: >-
-    Page Title
-category: concepts
-tags: [tag1, tag2]
-sources: [projects/<project-name>]
-summary: >-
-    One or two sentences (≤200 chars) describing what this page covers.
-lifecycle: draft
-lifecycle_changed: TIMESTAMP_DATE
-created: TIMESTAMP
-updated: TIMESTAMP
----
-
-Use folded scalar syntax (summary: >-) for title and summary to keep frontmatter parser-safe across punctuation (:, #, quotes) without escaping rules.
-Keep the title and summary contents indented by two spaces under summary: >-.
-
-# Page Title
-
-- A fact the codebase or a doc actually states.
-- A reason the design works this way. ^[inferred]
-
-Use [[wikilinks]] to connect to other pages.
-```
-
-**Write a `summary:` frontmatter field** on every new/updated page (1–2 sentences, ≤200 chars), using `>-` folded style. For project sync, a good summary answers "what does this page tell me about the project I wouldn't guess from its title?" This field powers cheap retrieval by `wiki-query`.
-
-**Apply provenance markers** per `wiki` (Provenance Markers section). For project sync specifically:
-
-- **Extracted** — anything visible in the code, config, or a doc/commit message: file structure, dependencies, function signatures, what a file does.
-- **Inferred** — *why* a decision was made, design rationale, trade-offs, "the team chose X because Y" — unless a commit message, doc, or ADR states it explicitly.
-- **Ambiguous** — when the code and docs disagree, or when there's clearly an in-progress migration with two patterns living side by side.
-
-The inline markers are the whole provenance signal — there is no numeric block to compute.
+A good project-sync `summary:` answers "what does this page tell me about the project I wouldn't guess from its title?"
 
 ### Updating vs creating
 
 - If a page already exists in the vault, **merge** new information into it. Don't create duplicates.
 - If you're adding to an existing page, update the `updated` timestamp and add the new source.
-- Check `index.md` to see what's already there before creating anything new.
+- Before creating anything, check for an existing page via `.manifest.json` or a `glob` + frontmatter grep — never by parsing `index.md` (it may be base-backed).
 
 ## Step 5: Cross-link
 
@@ -149,26 +104,17 @@ After creating/updating pages:
 
 ## Step 6: Update Tracking
 
-### Update `.manifest.json`
+### Resync `.manifest.json`
 
-Add or update this project's entry:
+Never hand-write the manifest. After writing pages, run `regen-manifest.py` to resync it from disk (it preserves `ingested_at` and `private_paths`):
 
-```json
-{
-  "projects": {
-    "<project-name>": {
-      "source_cwd": "/absolute/path/to/project",
-      "last_synced": "TIMESTAMP",
-      "last_commit_synced": "abc123f",
-      "pages_in_vault": ["projects/<project-name>/<project-name>.md", "..."]
-    }
-  }
-}
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py" --vault "$OBSIDIAN_VAULT_PATH"
 ```
 
 ### Update `index.md`
 
-Add entries for any new pages created.
+A base-backed index needs no edit — it lists pages live from their frontmatter. Only a hand-curated `index.md` gets a new line per created page.
 
 ### Update `log.md` and `hot.md`
 
