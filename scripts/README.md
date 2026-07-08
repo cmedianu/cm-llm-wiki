@@ -202,7 +202,7 @@ Walks every content `.md`, extracts the `---` … `---` block, and parses it wit
 a real YAML parser. Reports two problem classes:
 
 - **INVALID** — frontmatter present but unparseable. Almost always an unquoted
-  colon-space (e.g. `title: Speculor: A Platform`) or another YAML
+  colon-space (e.g. `title: Acme: A Platform`) or another YAML
   metacharacter leading a value. This is the one that makes Obsidian silently
   drop the whole Properties panel.
 - **MISSING** — a real page with no frontmatter. Scaffolding/meta files

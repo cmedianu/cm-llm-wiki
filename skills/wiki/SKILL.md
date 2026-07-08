@@ -198,7 +198,7 @@ Always use vault-relative paths, not bare basenames — some basenames aren't gl
 
 ## Page-Writing Protocol
 
-Every skill that **creates or updates pages** (`wiki-ingest`, `wiki-capture`, `wiki-update`, `wiki-research`, `wiki-claude-history`) follows this one contract rather than restating it:
+Every skill that **creates or updates pages** (`wiki-ingest`, including its Claude-history mode; `wiki-capture`, including its project-sync mode; and `wiki-research`) follows this one contract rather than restating it:
 
 1. **Frontmatter** — use the Page Template above. Required: `title`, `category`, `tags`, `summary`, `sources`, `created`, `updated`. `category` **equals the page's folder, discovered from disk** (never an assumed taxonomy). Ingest-class skills also set `lifecycle: draft` + `lifecycle_changed: <today>`; only a human promotes lifecycle, and it is left unchanged on update.
 2. **Summary** — 1–2 sentences, **hard limit under 200 characters** (count before writing; `wiki-lint` fails 200+). It powers `wiki-query`'s cheap retrieval, so rewrite it whenever a page's meaning shifts.
@@ -231,9 +231,9 @@ The vault is self-describing — **zero configuration**, no config file or per-v
 
 1. **Walk up from CWD** for `.manifest.json` (stop at `$HOME` or `/`). Found means you are inside a vault; use it. This always wins, so working inside a vault never needs any config.
 2. **Project map.** Look up the current project root (CWD or nearest ancestor) in `~/.obsidian-wiki/projects.json` (a `{ "project-path": "vault-name" }` map). A hit resolves to that registered vault's `OBSIDIAN_VAULT_PATH` (from `~/.obsidian-wiki/config.<name>`).
-3. **Quiz (interactive).** No manifest above you and no project-map entry means ask: list the registered vaults (`~/.obsidian-wiki/config.*`) and have the user pick one, then **persist** the choice to `projects.json` under the current project root so you do not ask again. `wiki-switch` owns this quiz; other skills invoke the same behaviour.
+3. **Quiz (interactive).** No manifest above you and no project-map entry means ask: list the registered vaults (`~/.obsidian-wiki/config.*`) and have the user pick one, then **persist** the choice to `projects.json` under the current project root so you do not ask again. `wiki-vault` owns this quiz; other skills invoke the same behaviour.
 4. **Headless fallback.** When no user is present (cron, scripted runs), read `OBSIDIAN_VAULT_PATH` from the active global config `~/.obsidian-wiki/config` (a symlink to one `config.<name>`).
-5. **Nothing registered** at all: tell the user to run `wiki-setup`.
+5. **Nothing registered** at all: tell the user to run `wiki-vault` to initialize one.
 
 The maintenance scripts do the walk-up (step 1) themselves. Standard skill setup line:
 
@@ -253,26 +253,21 @@ Three ingest modes:
 | **Rebuild** | Major drift, fresh start needed | Archive current wiki to `_archives/`, clear, reprocess all sources |
 | **Restore** | Need to go back | Bring back a previous archive |
 
-Use `wiki-status` to see the delta and get a recommendation. Use `wiki-rebuild` for archive/rebuild/restore.
+Use `wiki-status` to see the delta and get a recommendation. Use `wiki-compact` (Rebuild Mode) for archive/rebuild/restore.
 
 ## Reference
 
-Companion skills (`../`):
+Companion skills (`../`), the consolidated ~10-skill lineup:
 
-- **wiki-setup** — Initialize a new vault
-- **wiki-status** — Audit what's ingested, compute delta, recommend append vs rebuild
-- **wiki-rebuild** — Archive, rebuild from scratch, or restore
-- **wiki-ingest** — Distill source documents into wiki pages
-- **wiki-query** — Answer questions against the wiki
-- **wiki-lint** — Audit and maintain wiki health
-- **wiki-compact** — Merge duplicates, archive stale pages, roll the log (the shrink side)
-- **wiki-update** — Push knowledge from any working project into the wiki
-- **wiki-capture** — Save the current conversation as a wiki page
-- **wiki-research** — Multi-round web research, auto-file results
-- **wiki-synthesize** — Cross-page synthesis pages
-- **wiki-switch** — Manage multiple vault profiles
-- **wiki-link** — Discover and insert missing wikilinks
-- **wiki-claude-history** — Mine `~/.claude` session data into the wiki
+- **wiki-vault**: Initialize a new vault, and switch/select which vault a project targets (registry + quiz)
+- **wiki-status**: Audit what's ingested, compute delta, recommend append vs rebuild
+- **wiki-ingest**: Distill source documents into wiki pages; **Claude-history mode** mines `~/.claude` session data
+- **wiki-query**: Answer questions against the wiki
+- **wiki-lint**: Audit and maintain wiki health
+- **wiki-compact**: Merge duplicates, archive stale pages, roll the log (the shrink side); **Rebuild Mode** archives/rebuilds/restores the whole wiki
+- **wiki-capture**: Save the current conversation as a wiki page; **project-sync mode** pushes knowledge from any working project into the wiki
+- **wiki-research**: Multi-round web research, auto-file results
+- **wiki-link**: Discover and insert missing wikilinks; **synthesis mode** creates cross-page synthesis pages
 
 Maintenance scripts (`../../scripts/`, symlinked into vaults as `.claude/wiki-scripts/`):
 

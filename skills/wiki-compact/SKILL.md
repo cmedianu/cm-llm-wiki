@@ -7,13 +7,17 @@ description: >
   "prune my wiki", "merge duplicates", "archive stale pages", "the wiki is getting bloated",
   "rotate the log", or after wiki-lint reports oversized_page / stale_snapshot / log_size findings.
   This is the shrink-side counterpart to wiki-ingest — it removes and consolidates, never adds knowledge.
+  Also handles the nuclear heavy-hammer mode: archive the whole wiki, rebuild it from scratch, or restore
+  a previous archive. Triggers on "rebuild the wiki", "start over", "archive and rebuild", "restore from
+  archive", "nuke and repave", "clean rebuild", or when the wiki has drifted too far from sources and
+  incremental fixes won't cut it.
 ---
 
 # Wiki Compact — Prune, Merge, Archive
 
 You are reducing the wiki's weight without losing knowledge. Growth skills (ingest, capture, research) only ever add; this skill is the counterweight: it merges what drifted apart, retires what stopped being true, and keeps the always-growing files bounded. Every byte a future agent doesn't have to read is the win.
 
-**This skill deletes and rewrites. Confirm the plan with the user before executing it** (Step 2 → Step 3 gate). `wiki-rebuild` handles the nuclear cases (archive-everything, restore); this skill is the scalpel.
+**This skill deletes and rewrites. Confirm the plan with the user before executing it** (Step 2 to Step 3 gate). Steps 1 to 5 are the **scalpel**: targeted merges, archives, and log rolls. For the **nuclear** cases (archive the whole wiki, rebuild from scratch, restore a previous archive) use **Rebuild Mode** at the end; it is the heavy hammer, always gated on explicit user confirmation.
 
 ## Before You Start
 
@@ -99,3 +103,71 @@ The script owns the mechanics (year-split archive files, frontmatter preserved).
 - [ ] Raw originals parked in `_sources/`, not deleted
 - [ ] Manifest resynced via `regen-manifest.py`; lint shows no new errors
 - [ ] Operation journaled via `wiki-journal.py`
+
+---
+
+## Rebuild Mode
+
+*(Merged from the former `wiki-rebuild` skill.)* This is the destructive heavy hammer: snapshot the
+whole wiki, optionally clear and rebuild it from sources, or restore a past snapshot. **Always archive
+first, always confirm with the user before clearing the live wiki.** Steps 1 to 5 above are the scalpel;
+reach for this only when the wiki has drifted too far for targeted merges. Confirm which of three
+sub-modes the user wants: **archive only**, **archive + rebuild**, or **restore**.
+
+### The archive system
+
+Archives live at `$OBSIDIAN_VAULT_PATH/_archives/<YYYY-MM-DDTHH-MM-SSZ>/`. Each is a full copy of the
+wiki state: every top-level **content** folder (all top-level dirs except `_*` and `.*`, discovered from
+disk), plus `index.md`, `log.md`, `hot.md`, `.manifest.json`, and an `archive-meta.json`:
+
+```json
+{ "archived_at": "2026-04-06T10:30:00Z", "reason": "rebuild|snapshot|pre-restore",
+  "total_pages": 87, "total_sources": 42, "vault_path": "...", "manifest_snapshot": ".manifest.json" }
+```
+
+**Manifest repair first.** If the manifest merely drifted from the filesystem (an Obsidian-side rename,
+a manual `mv`, a restore from backup), do **not** rebuild; run `regen-manifest.py` from the vault root
+(`DRY_RUN=1` previews). It rewrites the manifest from disk while preserving `ingested_at`. That is the
+cheap repair; rebuild is the expensive one.
+
+### Sub-mode 1: Archive only
+
+Snapshot without rebuilding. Create `_archives/<timestamp>/`, copy every top-level content folder plus
+`index.md`, `log.md`, `hot.md`, `.manifest.json` into it, write `archive-meta.json` with reason
+`"snapshot"`, then journal:
+`--log '<ARCHIVE reason="snapshot" pages=N destination="_archives/<timestamp>">'`. Report: "Archived N
+pages. Current wiki is untouched."
+
+### Sub-mode 2: Archive + rebuild
+
+1. **Archive** current state exactly as sub-mode 1, but reason `"rebuild"`.
+2. **Clear the live wiki:** remove every top-level content folder (discovered from disk). **Keep**
+   `_archives/`, `.obsidian/` (Obsidian config), and `.claude/` (skills/scripts/conventions symlinks).
+   Reset `index.md` to the empty template; reset `log.md`/`hot.md` to just the rebuild entry; delete
+   `.manifest.json` (recreated during ingest).
+3. **Hand back to the user:** tell them the vault is cleared and ready for a full re-ingest via
+   `wiki-status` (all sources show as new) then `wiki-ingest` (documents, and Claude-history mode).
+   **Don't auto-run the ingest;** the user chooses what to re-ingest and in what order, and some sources
+   may no longer be relevant.
+4. **Journal** (a rebuild is a major state change, so stamp `hot.md` too):
+   `--log '<REBUILD archived_to="_archives/<timestamp>" previous_pages=N>'`
+   `--hot-entry '**Wiki rebuilt from scratch.** Prior state archived to \`_archives/<timestamp>\`.' --hot-trim 3`.
+
+### Sub-mode 3: Restore from archive
+
+1. **List archives:** read each `_archives/*/archive-meta.json` and present a Date / Reason / Pages /
+   Sources table.
+2. **Confirm** which archive; warn that restoring overwrites the current live wiki.
+3. **Archive the current state first** (reason `"pre-restore"`) so nothing is lost.
+4. **Restore:** clear the live wiki (as sub-mode 2 step 2), copy the chosen archive's content back into
+   the live directories, restore `index.md`/`log.md`/`hot.md`/`.manifest.json` from it, then journal:
+   `--log '<RESTORE from="_archives/<timestamp>" pages_restored=N>'`.
+5. **Report** what was restored and suggest running `wiki-lint` to check the restored state.
+
+### Safety rules
+
+1. **Always archive before destructive operations.** No exceptions.
+2. **Always confirm with the user** before clearing the live wiki.
+3. **Never delete archives** unless the user explicitly asks; they are cheap insurance.
+4. **`.obsidian/` is sacred:** never touch it during archive/rebuild/restore.
+5. If something goes wrong mid-rebuild, the archive is there, so tell the user they can restore.

@@ -112,7 +112,7 @@ through that symlink, so editing them once in the repo updates all vaults. Keep
 per-vault rules below the import. (The by-hand form skips the generated
 AGENTS.md / hook configs; run `wire-vault.sh` for the full multi-agent wiring.)
 
-If the vault has no `.manifest.json` yet, initialize it: run `wiki-setup` ("set up
+If the vault has no `.manifest.json` yet, initialize it: run `wiki-vault` ("set up
 my wiki") from inside the vault, or `wiki-scripts/regen-manifest.py` if it already
 has notes. Keep the vault relocatable, with no hard-coded absolute paths pointing back
 at itself, so `cp -r <vault> elsewhere && cd elsewhere` just works (see the keystone
@@ -149,7 +149,7 @@ The same wiring serves three agents; per-tool mechanics, and the reasoning, in o
   needs an absolute path and is generated. **Codex asks you to trust project hooks once:
   run `/hooks` inside Codex in the vault the first time.**
 - Codex also wants each vault trusted (`trust_level` prompt on first launch), and
-  `wiki-claude-history` is inherently Claude-specific; the other skills are tool-neutral.
+  `wiki-ingest`'s Claude-history mode is inherently Claude-specific; the other skills are tool-neutral.
 
 ## Choosing a vault
 
@@ -166,7 +166,7 @@ first match wins:
    `~/.obsidian-wiki/config` symlink.
 
 A vault is *registered* by a `~/.obsidian-wiki/config.<name>` file holding its
-`OBSIDIAN_VAULT_PATH`. The `wiki-switch` skill manages the registry, the project map, and the
+`OBSIDIAN_VAULT_PATH`. The `wiki-vault` skill manages the registry, the project map, and the
 quiz (`/wiki-switch` with no args re-runs the quiz; `/wiki-switch <name>` maps the current
 project; `/wiki-switch list|where|new|forget|default`). None of this lives inside a vault, so
 vaults stay relocatable.
@@ -204,23 +204,19 @@ you whether you need to. The mental model: **vault = data (portable), repo = too
 
 Core karpathy operations:
 
-- `wiki` — three-layer architecture and conventions (the "theory" keystone)
-- `wiki-setup` — initialize a new vault
-- `wiki-ingest` — distill source documents into wiki pages
-- `wiki-query` — answer questions against the wiki
-- `wiki-lint` — health check (orphans, contradictions, stale pages)
-- `wiki-status` — manifest delta vs sources
-- `wiki-rebuild` — archive, rebuild from scratch, restore
+- `wiki`: three-layer architecture and conventions (the "theory" keystone)
+- `wiki-vault`: initialize a new vault, and switch/select which vault a project targets (registry + quiz)
+- `wiki-ingest`: distill source documents into wiki pages; **Claude-history mode** mines `~/.claude` session data
+- `wiki-query`: answer questions against the wiki
+- `wiki-lint`: health check (orphans, contradictions, stale pages)
+- `wiki-status`: manifest delta vs sources
+- `wiki-compact`: merge/prune/archive the wiki; **Rebuild Mode** archives, rebuilds from scratch, restores
 
 Adjuncts:
 
-- `wiki-link` — write-side: discover and insert missing wikilinks
-- `wiki-switch` — register vaults, map a project to a vault, and run the vault-picker quiz
-- `wiki-update` — push knowledge from any working project into the vault
-- `wiki-capture` — save current conversation as a structured page
-- `wiki-claude-history` — mine `~/.claude` session data into the wiki
-- `wiki-research` — multi-round web research + auto-file results
-- `wiki-synthesize` — discover cross-page synthesis opportunities
+- `wiki-link`: write-side, discovers and inserts missing wikilinks; **synthesis mode** creates cross-page synthesis pages
+- `wiki-capture`: save current conversation as a structured page; **project-sync mode** pushes any working project into the vault
+- `wiki-research`: multi-round web research + auto-file results
 
 ## Scripts
 

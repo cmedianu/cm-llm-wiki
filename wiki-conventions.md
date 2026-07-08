@@ -31,11 +31,11 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   names kept as one word (e.g. `vscode`, `libgen`).
 - **Frontmatter:** every page has it. Don't create pages without it.
 - **Frontmatter values with a colon-space (`: `) must be quoted or rewritten.** In YAML
-  `: ` is the key/value separator, so an unquoted value like `title: Speculor: A Platform`
+  `: ` is the key/value separator, so an unquoted value like `title: Acme: A Platform`
   or `summary: site: operators ...` is a parse error and Obsidian silently fails to render
   the whole Properties block. **Prefer rewriting** to remove the colon (e.g. `Title — Subtitle`
   with an em dash, or reword the prose). If the colon is intrinsic — a real proper-name title
-  like `"ConchShell: A Wearable ASL Translator"` — **double-quote the value** instead. Same
+  like `"Helios: A Wearable Translator"` — **double-quote the value** instead. Same
   applies to other YAML metacharacters at the start of a value (`#`, `&`, `*`, `[`, `{`, `>`, `|`, `@`, `` ` ``).
   Check the whole vault with `uv run .claude/wiki-scripts/validate-frontmatter.py` (exit 0 = clean);
   run it after any bulk frontmatter edit or ingest.

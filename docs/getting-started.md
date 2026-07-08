@@ -53,7 +53,7 @@ The two directory links use **junctions** (no admin, no Developer Mode). The sin
 
 That creates the `.claude` links (`wiki-scripts`, `wiki-conventions.md`, `hooks`) plus `.github/hooks` (Copilot's hook config), seeds a `CLAUDE.md` that imports the shared conventions, generates `AGENTS.md` from it for Codex/Copilot, generates `.codex/hooks.json`, and seeds `.claude/settings.json` with the update-timestamp hook. Open `CLAUDE.md` and fill in the "This vault's specifics" section (folder taxonomy, private areas, special namespaces), then re-run the wire script (or `scripts/sync-agents.py`) so `AGENTS.md` picks the changes up. Don't forget the user-level step too, once per machine: `wire-vault.sh --user` (`.ps1 -User`) links every skill into `~/.claude/skills/` and `~/.agents/skills/`.
 
-The vault is the directory containing `.manifest.json`; skills find the active vault by walking up from your shell's CWD for it, so `cd /path/to/your/vault && claude` puts you in that vault's context — no global flag. If the vault has no `.manifest.json` yet, create it with `wiki-setup` (see below).
+The vault is the directory containing `.manifest.json`; skills find the active vault by walking up from your shell's CWD for it, so `cd /path/to/your/vault && claude` puts you in that vault's context — no global flag. If the vault has no `.manifest.json` yet, create it with `wiki-vault` (see below).
 
 ## First three commands
 
@@ -72,7 +72,7 @@ Then say these in plain English. The skills auto-load based on what you ask.
 
 Triggers `wiki-status`. Reports how many sources are ingested, what's pending, whether to append or rebuild next.
 
-If the vault is fresh → run `wiki-setup` first ("set up my wiki").
+If the vault is fresh → run `wiki-vault` first ("set up my wiki").
 If the vault already has notes but no `.manifest.json` → run `scripts/regen-manifest.py` from the vault root to bootstrap it (`uv run .claude/wiki-scripts/regen-manifest.py`, same command on Windows).
 
 ### 2. Add a source
@@ -99,11 +99,11 @@ For cheap lookups: phrase it as "quick answer: ..." and it'll read only `summary
 | Run web research and file results | "research LLM evaluation" | `wiki-research` |
 | Audit and fix issues | "audit my wiki" | `wiki-lint` |
 | Add missing cross-links | "link my pages" | `wiki-link` |
-| Push project work to the wiki | "save this project to the wiki" | `wiki-update` |
-| Find cross-cutting connections | "synthesize my wiki" | `wiki-synthesize` |
-| Mine your Claude session history | "process my Claude history" | `wiki-claude-history` |
-| Start fresh | "rebuild the wiki" | `wiki-rebuild` |
-| Switch between vaults | "/wiki-switch work" | `wiki-switch` |
+| Push project work to the wiki | "save this project to the wiki" | `wiki-capture` (project-sync mode) |
+| Find cross-cutting connections | "synthesize my wiki" | `wiki-link` (synthesis mode) |
+| Mine your Claude session history | "process my Claude history" | `wiki-ingest` (Claude-history mode) |
+| Start fresh | "rebuild the wiki" | `wiki-compact` (Rebuild Mode) |
+| Set up or switch vaults | "/wiki-switch work" | `wiki-vault` |
 
 > **Heads-up:** `wiki-lint` ("audit my wiki") and `wiki-status` insights ("show me the hubs") run the Python analysis scripts (`wiki-lint.py` / `wiki-graph.py`), so they need `uv` — see [Prerequisites](#prerequisites). Every other skill needs nothing but Claude Code.
 
@@ -125,7 +125,7 @@ The wiring above already serves both; nothing extra to install. What differs fro
 - The copy method works for them too: put the `skills` folders in `.agents/skills/` at the
   vault root (Codex and Copilot both read it; Copilot also reads `.claude/skills/`), and
   paste the conventions into an `AGENTS.md` by hand since there is no import to resolve.
-- `wiki-claude-history` mines `~/.claude` session data and only makes sense in Claude Code.
+- `wiki-ingest`'s Claude-history mode mines `~/.claude` session data and only makes sense in Claude Code.
 
 ## Multi-vault
 
@@ -153,7 +153,7 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 WSL is the exception: it resolves reparse points natively, so a `wire-vault.sh` setup used **only** from WSL works even when the vault sits under OneDrive — right up until a native-Windows tool needs `.claude/`, at which point the link reads as a broken 0 KB file. If your workflow is WSL-only, you can ignore this; if anything on the Windows side touches the vault, copy.
 
-**No `.manifest.json`?** Skills can't locate the vault and tell you to run `wiki-setup`. That file is the canonical vault marker — `wiki-setup` creates it on a fresh vault, or `scripts/regen-manifest.py` bootstraps one on a vault that already has notes.
+**No `.manifest.json`?** Skills can't locate the vault and tell you to run `wiki-vault`. That file is the canonical vault marker — `wiki-vault` creates it on a fresh vault, or `scripts/regen-manifest.py` bootstraps one on a vault that already has notes.
 
 **Moved the vault, or `.claude` links broke?** Re-run `wire-vault.sh <vault>` from the repo to repair the links — `--check` first if you just want a diagnosis (on Windows: `wire-vault.ps1 <vault>`, `-Check` to diagnose). The vault content travels fine on its own; only the links back into this repo need re-pointing.
 

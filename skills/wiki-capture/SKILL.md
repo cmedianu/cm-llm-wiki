@@ -1,16 +1,24 @@
 ---
 name: wiki-capture
 description: >
-  Save the current conversation as a permanent, structured wiki note. Use this skill when the user
-  says "save this", "/wiki-capture", "capture this", "file this conversation", "preserve this",
-  "add this to my wiki", or wants to turn what was just discussed into lasting knowledge. The skill
-  classifies the content, rewrites it as declarative knowledge (not a chat transcript), and places
-  it in the correct vault category.
+  Save knowledge from wherever you are into the Obsidian wiki. Use this skill when the user says
+  "save this", "/wiki-capture", "capture this", "file this conversation", "preserve this",
+  "add this to my wiki", or wants to turn what was just discussed into lasting knowledge — that is
+  the default conversation-capture mode. Also handles project-sync mode: run from any project when the
+  user says "update wiki", "sync to wiki", "save this to my wiki", "update obsidian", or wants to
+  distill what they've been working on into their knowledge base. The skill classifies the content,
+  rewrites it as declarative knowledge (not a chat transcript), and places it in the correct vault
+  category.
 ---
 
-# Wiki Capture — Conversation to Wiki Note
+# Wiki Capture: Save Knowledge into the Wiki
 
-You are preserving knowledge from the current conversation as a permanent wiki note. The goal is to extract the *substance* — the knowledge itself — not a summary of what was said.
+You are preserving knowledge as a permanent wiki note. The goal is to extract the *substance*, the knowledge itself, not a summary of what was said.
+
+## Two Modes
+
+- **Conversation capture (default):** turn the current chat into a wiki note. This is Steps 1 to 7 below. Triggers: "save this", "capture this", "file this conversation".
+- **Project sync:** run from *any* project directory to distil what you have been building (code, commits, docs) into the wiki. Triggers: "update wiki", "sync to wiki", "update obsidian". This mode has its own flow; see **Project Sync Mode** at the end. The vault resolution, Page-Writing Protocol, and tracking-file updates are shared with the default mode.
 
 ## Before You Start
 
@@ -206,3 +214,74 @@ Type: synthesis
 - [ ] Written per the Page-Writing Protocol (frontmatter, summary, provenance, ≥2 links, journal, manifest)
 - [ ] Private/sensitive content filed in its private area, not surfaced in a public index
 - [ ] Confirmed save path to user
+
+---
+
+## Project Sync Mode
+
+*(Merged from the former `wiki-update` skill.)* Use this flow when the trigger is "update wiki" / "sync
+to wiki" / "update obsidian" and you are sitting in an arbitrary **project** directory, not distilling a
+conversation. The job is to push what you have been *building* into the wiki. Vault resolution, the
+Page-Writing Protocol, and tracking-file updates are the same as the default mode; the steps below
+replace Steps 1 to 6.
+
+### PS1: Understand the project
+
+Scan the CWD to figure out what the project is: `README.md`, `docs/`, source structure (frameworks,
+languages, key abstractions), the manifest-of-record (`package.json`, `pyproject.toml`, `go.mod`,
+`Cargo.toml`, and the like), the git log (decision-signalling commit messages, not "fix typo" churn),
+and any `.claude/` memory files. Derive a clean project name from the directory name.
+
+### PS2: Compute the delta
+
+There is no per-project tracking in the manifest, so bound the delta from disk:
+
+- **First-time sync** (no existing vault pages for this project): full scan; everything is new.
+- **Re-sync:** find the newest `updated:` across this project's existing vault pages and only consider
+  what changed since: `git log --since="<that date>" --oneline` (or `git log <ref>..HEAD` if the user
+  gave a ref). If nothing meaningful changed, tell the user and stop.
+
+### PS3: Decide what to distil
+
+The Karpathy question: *what would you want to know about this project if you came back in 3 months with
+zero context?* **Distil:** architecture decisions and *why*; patterns discovered while building; what
+tools/services/APIs it depends on and how they wire together; key abstractions and the mental model;
+trade-offs evaluated and what was picked. **Skip:** file listings, boilerplate, obvious config,
+individual bug fixes with no broader lesson, dependency versions, anything the code already says
+plainly. Heuristic: *if reading the codebase answers the question, don't wiki it; if you'd re-derive it
+from git blame across 20 commits, wiki it.*
+
+### PS4: Distil into wiki pages
+
+Write each page per the Page-Writing Protocol in `wiki/SKILL.md`. Placement:
+
+- **Project-specific** knowledge goes under `$VAULT/projects/<project-name>/`: an overview page
+  `projects/<project-name>/<project-name>.md` (named after the project, **never** `_project.md`, because
+  the filename is the Obsidian graph node label) plus discovered subcategories under it. Reuse subfolders
+  that already exist; don't impose a fixed set.
+- **Global** knowledge routes to the best-fitting existing top-level category (discovered from disk). If
+  genuinely nothing fits, `mkdir` a new top-level category rather than forcing a page into the wrong
+  folder.
+
+**Provenance mapped to code:** *extracted* (no marker) covers anything visible in
+code/config/docs/commit messages (structure, dependencies, signatures, what a file does); `^[inferred]`
+covers *why* a decision was made, rationale, and trade-offs, unless a commit/doc/ADR states it;
+`^[ambiguous]` covers a case where code and docs disagree, or an in-progress migration with two patterns
+side by side. **Merge, don't duplicate:** fold into an existing page and add the new source rather than
+creating a second page on the same topic. Don't copy code; distil the *knowledge* ("uses a debounced
+search with 300ms delay", not the debounce function).
+
+### PS5: Cross-link
+
+Add `[[wikilinks]]` from new pages to related existing pages and back, and link the project overview to
+all its project-specific pages and relevant global pages.
+
+### PS6: Update tracking
+
+Same as Step 6 (default mode): resync `.manifest.json` with `regen-manifest.py`, update a hand-curated
+`index.md` only (base-backed needs none), and drive `log.md` / `hot.md` with `wiki-journal.py`, for
+which you compose the conceptual one-line entry. Use a `WIKI_UPDATE` log op-code, e.g.
+`--log 'WIKI_UPDATE project=<name> pages_updated=X pages_created=Y source_cwd=/path/to/project'`. Edit
+the semantic **Active Threads** / **Key Takeaways** sections by hand if this sync made the project an
+ongoing focus or surfaced a key decision. The project overview `<project-name>.md` is the anchor, so
+make it good.

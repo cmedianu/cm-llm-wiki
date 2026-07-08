@@ -8,6 +8,10 @@ description: >
   mentions "orphan pages" in the context of wanting to connect them, or says things like
   "my wiki feels disconnected" or "pages aren't linked well". This is a write-heavy skill —
   it actually modifies pages to add links, unlike wiki-lint which just reports issues.
+  Also handles synthesis mode: discovering pairs or clusters of concepts that co-occur across many
+  pages but have no page connecting them, and writing new synthesis pages that draw the cross-cutting
+  conclusion. Triggers on "synthesize my wiki", "find connections", "what concepts keep coming up
+  together", "/wiki-synthesize", or after a large ingest when the vault has grown significantly.
 ---
 
 # Cross-Linker — Automated Wiki Cross-Referencing
@@ -15,6 +19,11 @@ description: >
 You are weaving the wiki's knowledge graph tighter by finding and inserting missing `[[wikilinks]]` between pages that should reference each other but currently don't.
 
 **Follow the Retrieval Primitives table in `wiki/SKILL.md`.** Build the registry in Step 1 by grepping frontmatter only (not full pages). Reserve full `Read` for the unlinked-mention detection pass, and even there, only read pages whose summaries/titles make them plausible link targets. Blind full-vault reads are what this framework exists to avoid.
+
+## Two Modes
+
+- **Cross-link (default):** find and insert missing `[[wikilinks]]` between pages that already exist. This is Steps 1 to 6 below.
+- **Synthesis:** go one level up. Find concepts that co-occur across many pages but have no page *connecting* them, and write new synthesis pages that state the cross-cutting conclusion. Triggers: "synthesize my wiki", "find connections", "/wiki-synthesize". See **Synthesis Mode** at the end. Cross-linking rewires what exists; synthesis creates the missing connective page. Run synthesis after a large ingest, then cross-link to weave the new pages in.
 
 ## Before You Start
 
@@ -165,3 +174,82 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
 - **Don't touch pages in `_archives/`.** Those are frozen snapshots.
 - **Respect existing structure.** If a page carefully curates its links in a `## Key Concepts` section, add to that section rather than creating a separate `## Related`.
 - **Entity pages are link magnets.** An entity like `jane-doe` should be linked from almost every project page. Prioritize these.
+
+---
+
+## Synthesis Mode
+
+*(Merged from the former `wiki-synthesize` skill.)* Here you are not adding links between existing
+pages; you are discovering concepts that co-occur across the wiki but have **no dedicated synthesis
+page** connecting them, and writing the few most valuable ones. The vault resolution and Page-Writing
+Protocol are shared; the steps below replace Steps 1 to 6. Before starting, read `hot.md` (active
+threads may already point at synthesis gaps) and `_meta/taxonomy.md` (tag vocabulary), and check
+`_insights.md`, where `wiki-status` may have already flagged synthesis candidates.
+
+### SY1: Build the co-occurrence map
+
+Scan every non-special page (skip `index.md`, `log.md`, `hot.md`, `_insights.md`, `_meta/*`,
+`_archives/*`, `_raw/*`), collecting each page's outgoing `[[wikilinks]]`, `tags`, and `category`. Build
+a co-occurrence matrix: for every pair of concept/entity pages (A, B), count how many *other* pages link
+to **both**. Aim for the top 20 to 30 pairs by co-occurrence, not exhaustive. Grep backlinks efficiently
+and intersect the result sets:
+
+```bash
+grep -rl "\[\[concepts/concept-a\]\]" "$OBSIDIAN_VAULT_PATH" --include="*.md"
+```
+
+### SY2: Filter out already-synthesized pairs
+
+Read the vault's synthesis category. For each existing synthesis page, read its `sources` frontmatter or
+body `[[wikilinks]]` and mark those pairs covered; remove covered pairs from the candidate list.
+
+### SY3: Score and rank
+
+Judge how much a dedicated synthesis page would add (qualitative, no arithmetic). Prioritize pairs that
+co-occur across many pages, **cross domains** (different categories/tag clusters, so less obvious and
+more valuable), would **resolve a flagged contradiction**, or **join hubs** (per `wiki-graph.py` /
+`_insights.md`). Write the ~5 strongest. If the user named a topic ("synthesize everything about
+observability"), filter to that domain first.
+
+### SY4: Draft synthesis pages
+
+Create each page in the vault's **synthesis category** per the Page-Writing Protocol. Synthesis-specific:
+
+- **Title is `<Concept A> × <Concept B>`**, where the `×` signals a synthesis page. Set `sources:` to
+  every page that links to both concepts.
+- **Body**, in order: `## The Connection` (the non-obvious relationship the individual pages don't
+  capture), `## Where They Co-occur`, `## Cross-cutting Insight` (the point of the page, visible only
+  looking at both together), `## Tensions and Trade-offs`, `## Open Questions`, `## Related` (full-path
+  wikilinks to both concepts and other related pages).
+- **Mostly `^[inferred]`**, since you are drawing connections across sources by definition;
+  `^[ambiguous]` where sources disagree.
+- **Privacy:** if any source page lives under a `private_paths` prefix, the synthesis is itself
+  private-scoped, so file it inside that private area or exclude those sources. Never surface a private
+  page's title/summary in a public synthesis page or index.
+
+### SY5: Back-link from source pages
+
+For each synthesis page, add a link to it from the concept pages it synthesizes, in their `## Related`
+section (create one at the bottom if absent): `- [[synthesis/concept-a-x-concept-b]] (synthesis)`.
+
+### SY6: Report opportunities not taken
+
+After writing the top ~5, list the next ~10 well-scoring candidates you skipped, so the user sees what
+the wiki thinks is worth exploring without forcing every synthesis in one run:
+
+```
+Skipped (consider next time):
+- [[concepts/caching]] × [[concepts/consistency]] : co-occurs in 4 pages, cross-domain
+```
+
+### SY7: Update special files
+
+Update a hand-curated `index.md` only (base-backed needs none) and drive `log.md` / `hot.md` with
+`wiki-journal.py`. Use a `WIKI_SYNTHESIZE` op-code, e.g.
+`--log 'WIKI_SYNTHESIZE pages_scanned=N synthesis_created=M candidates_skipped=K'`. Edit the semantic
+**Active Threads** by hand to record open questions the synthesis surfaced.
+
+**Synthesis quality:** a page that only summarizes its sources is useless; the value is the connection
+neither source states. Don't synthesize for its own sake; skip concepts that merely co-occur without a
+real conceptual link. Three-way syntheses are powerful but rare, warranted only when three concepts form
+a genuine triangle of mutual influence.

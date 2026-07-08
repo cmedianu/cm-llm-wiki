@@ -12,9 +12,9 @@ Resolve in order, first hit wins:
 
 1. **Walk up from CWD** for `.manifest.json` (up to `$HOME` or `/`). Inside a vault always wins; needs no config.
 2. **Project map** — look up the project root (CWD or nearest ancestor) in `~/.obsidian-wiki/projects.json`, a flat `{ "project-path": "vault-name" }` map. A hit resolves the name to its `OBSIDIAN_VAULT_PATH` in `~/.obsidian-wiki/config.<name>`.
-3. **Quiz (interactive)** — neither of the above means ask the user to pick from the registered vaults (`~/.obsidian-wiki/config.*`), then write the choice into `projects.json` so it sticks for this project. See `wiki-switch`.
+3. **Quiz (interactive)** — neither of the above means ask the user to pick from the registered vaults (`~/.obsidian-wiki/config.*`), then write the choice into `projects.json` so it sticks for this project. See `wiki-vault`.
 4. **Headless fallback** — when no user is present (cron/scripts), read `OBSIDIAN_VAULT_PATH` from the active global config `~/.obsidian-wiki/config` (a symlink to one `config.<name>`).
-5. **Prompt setup** — nothing registered: "No vault found. Run `wiki-setup` to initialize."
+5. **Prompt setup** — nothing registered: "No vault found. Run `wiki-vault` to initialize."
 
 ```bash
 # steps 1, 2, 4 (non-interactive). Step 3 (quiz) is agent-driven, not shell.
@@ -51,7 +51,7 @@ A single home-level file maps a project directory to a registered vault name, so
 { "/home/me/code/some-app": "personal", "/home/me/work/acme": "strata" }
 ```
 
-Keys are absolute project paths; values are registry names (`config.<name>`). The quiz (step 3) writes here; `wiki-switch` reads and manages it. Keep it home-level, never per-repo, so unrelated projects stay clean and nothing leaks into git.
+Keys are absolute project paths; values are registry names (`config.<name>`). The quiz (step 3) writes here; `wiki-vault` reads and manages it. Keep it home-level, never per-repo, so unrelated projects stay clean and nothing leaks into git.
 
 ### Paths derived from the vault location
 

@@ -23,7 +23,7 @@ You are computing the current state of the wiki: what's been ingested, what's ne
 
 The manifest lives at `$OBSIDIAN_VAULT_PATH/.manifest.json`. It tracks every source file that has been ingested.
 
-**If the manifest is missing but the vault has content** (e.g. a pre-existing Obsidian vault being adopted into the wiki pattern, or one where a bulk filesystem operation happened outside the skills), run `../wiki-scripts/regen-manifest.py` from the vault root. It scans the filesystem and rebuilds the manifest from scratch, registering existing pages as self-authored sources. Use `DRY_RUN=1` first to preview. If the manifest is missing AND the vault is empty, this is a fresh vault with nothing ingested — recommend `wiki-setup` instead.
+**If the manifest is missing but the vault has content** (e.g. a pre-existing Obsidian vault being adopted into the wiki pattern, or one where a bulk filesystem operation happened outside the skills), run `../wiki-scripts/regen-manifest.py` from the vault root. It scans the filesystem and rebuilds the manifest from scratch, registering existing pages as self-authored sources. Use `DRY_RUN=1` first to preview. If the manifest is missing AND the vault is empty, this is a fresh vault with nothing ingested — recommend `wiki-vault` instead.
 
 ```json
 {
@@ -240,11 +240,11 @@ uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBS
 ### When to skip
 
 - Vaults with fewer than 20 pages — not enough graph structure. Tell the user and skip.
-- After a fresh `wiki-rebuild` — wait until at least one ingest has happened.
+- After a fresh `wiki-compact` rebuild (Rebuild Mode) — wait until at least one ingest has happened.
 
 ## Notes
 
 - If the manifest doesn't exist, report everything as "new" and recommend a full ingest
 - This skill only reads and reports — it doesn't modify anything (except writing `_insights.md` in insights mode, which is regenerable)
-- The actual ingest work is done by the ingest skills (`wiki-ingest` for documents, `wiki-claude-history` for Claude/agent session history)
+- The actual ingest work is done by `wiki-ingest` (documents, and its Claude-history mode for Claude/agent session history)
 - Those skills are responsible for updating the manifest after they finish
