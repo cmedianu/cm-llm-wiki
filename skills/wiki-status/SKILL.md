@@ -28,45 +28,25 @@ The manifest lives at `$OBSIDIAN_VAULT_PATH/.manifest.json`. It tracks every sou
 ```json
 {
   "version": 1,
-  "last_updated": "2026-04-06T10:30:00Z",
+  "vault_path": "/absolute/path/to/vault",
+  "created": "2026-04-01T09:00:00Z",
+  "updated": "2026-04-06T10:30:00Z",
+  "private_paths": ["me", "context/me"],
   "sources": {
-    "/absolute/path/to/file.md": {
+    "concepts/transformers.md": {
+      "source_path": "concepts/transformers.md",
+      "kind": "self-authored",
       "ingested_at": "2026-04-06T10:30:00Z",
+      "lifecycle": "reviewed",
+      "pages": ["concepts/transformers.md"],
       "size_bytes": 4523,
-      "modified_at": "2026-04-05T08:00:00Z",
-      "source_type": "document",
-      "project": null,
-      "pages_created": ["concepts/transformers.md"],
-      "pages_updated": ["entities/vaswani.md"]
-    },
-    "~/.claude/projects/-Users-name-my-app/abc123.jsonl": {
-      "ingested_at": "2026-04-06T11:00:00Z",
-      "size_bytes": 128000,
-      "modified_at": "2026-04-06T09:00:00Z",
-      "source_type": "claude_conversation",
-      "project": "my-app",
-      "pages_created": ["entities/my-app.md"],
-      "pages_updated": ["skills/react-debugging.md"]
+      "mtime": "2026-04-05T08:00:00Z"
     }
-  },
-  "projects": {
-    "my-app": {
-      "source_path": "~/.claude/projects/-Users-name-my-app",
-      "vault_path": "projects/my-app",
-      "last_ingested": "2026-04-06T11:00:00Z",
-      "conversations_ingested": 5,
-      "conversations_total": 8,
-      "memory_files_ingested": 3
-    }
-  },
-  "stats": {
-    "total_sources_ingested": 42,
-    "total_pages": 87,
-    "total_projects": 6,
-    "last_full_rebuild": null
   }
 }
 ```
+
+The `sources` map is keyed by **vault-relative path**. Each entry has exactly these fields: `source_path`, `kind` (how the page/source arrived — `self-authored` for a hand-written page, or an ingest kind), `ingested_at`, `lifecycle`, `pages` (the page(s) the source produced), `size_bytes`, and `mtime`. The only top-level keys are `version`, `vault_path`, `created`, `updated`, `sources`, and the optional `private_paths`. **There is no `content_hash`, `projects`, or `stats` block** — page/source/project counts are computed at read time (glob + frontmatter grep), and the manifest itself is only ever written by `regen-manifest.py`, never by hand.
 
 ## Step 1: Scan Current Sources
 
@@ -105,12 +85,11 @@ Compare current sources against the manifest. Classify each source file:
 | Status | Meaning | Action needed |
 |---|---|---|
 | **New** | File exists on disk, not in manifest | Needs ingesting |
-| **Modified** | File in manifest, hash differs from `content_hash` | Needs re-ingesting |
-| **Touched** | File in manifest, mtime newer but hash unchanged | Skip — content identical, no re-ingest needed |
-| **Unchanged** | File in manifest, mtime and hash both match | Nothing to do |
+| **Modified** | File in manifest, `size_bytes` or `mtime` differs from disk | Needs re-ingesting |
+| **Unchanged** | File in manifest, `size_bytes` and `mtime` both match disk | Nothing to do |
 | **Deleted** | In manifest, but file no longer exists on disk | Note it — wiki pages may be stale |
 
-When a manifest entry has no `content_hash` (older entry), fall back to mtime comparison only.
+The change signal is `size_bytes` + `mtime` (the fields `regen-manifest.py` records). A file whose `mtime` moved but whose `size_bytes` is unchanged is *probably* just touched (git checkout, copy) rather than edited — if in doubt, a quick `diff` against the produced page settles it, but re-ingesting a touched file is harmless.
 
 For Claude history specifically, also compute:
 - New projects (directories in `~/.claude/projects/` not in manifest)
@@ -252,9 +231,10 @@ Turn the JSON into a readable report at the vault root. Overwrite freely — it'
 
 For "Questions Worth Asking", grep the flagged pages for `^[ambiguous]` claims and combine them with the graph's bridges and orphans — prioritize ambiguous claims first, then bridges, then isolates.
 
-After writing the file, append to `log.md`:
-```
-- [TIMESTAMP] STATUS_INSIGHTS hubs=H bridges=N fragmented=F delta="+N pages +M links"
+After writing the file, record the run with `wiki-journal.py` (don't hand-edit `log.md`):
+```bash
+uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
+  --log 'STATUS_INSIGHTS hubs=H bridges=N fragmented=F delta="+N pages +M links"'
 ```
 
 ### When to skip
@@ -266,5 +246,5 @@ After writing the file, append to `log.md`:
 
 - If the manifest doesn't exist, report everything as "new" and recommend a full ingest
 - This skill only reads and reports — it doesn't modify anything (except writing `_insights.md` in insights mode, which is regenerable)
-- The actual ingest work is done by the ingest skills (`wiki-ingest`, `wiki-claude-history`, `codex-history-ingest`, `data-ingest`)
+- The actual ingest work is done by the ingest skills (`wiki-ingest` for documents, `wiki-claude-history` for Claude/agent session history)
 - Those skills are responsible for updating the manifest after they finish
