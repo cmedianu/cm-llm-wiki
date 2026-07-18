@@ -213,7 +213,7 @@ observability"), filter to that domain first.
 
 ### SY4: Draft synthesis pages
 
-Create each page in the vault's **synthesis category** per the Page-Writing Protocol. Synthesis-specific:
+Create each page in the vault's **synthesis category** per the Page-Writing Protocol in `wiki/references/page-protocol.md`. Synthesis-specific:
 
 - **Title is `<Concept A> × <Concept B>`**, where the `×` signals a synthesis page. Set `sources:` to
   every page that links to both concepts.

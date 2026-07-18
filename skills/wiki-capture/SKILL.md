@@ -72,7 +72,7 @@ Do **not** write a summary of the conversation. Write the knowledge itself, in d
 - Not: "We decided to use Y because..."
 - Yes: "Y is preferred over Z because [reason]. [^[inferred] if the rationale was implied, not stated explicitly]"
 
-Apply provenance markers per the **Page-Writing Protocol** in `wiki/SKILL.md` — for a conversation, a claim stated outright is extracted (no marker), one you generalized from the discussion is `^[inferred]`, and a disputed or uncertain one is `^[ambiguous]`.
+Apply provenance markers per the **Page-Writing Protocol** in `wiki/references/page-protocol.md` — for a conversation, a claim stated outright is extracted (no marker), one you generalized from the discussion is `^[inferred]`, and a disputed or uncertain one is `^[ambiguous]`.
 
 **Be concise.** Distil, don't pad. Prefer tight bullets over prose paragraphs; cut hedging,
 restatement, and throat-clearing. Every sentence must carry a fact the reader can't infer from the
@@ -91,7 +91,7 @@ Derive a clear, descriptive title from the content. Slugify it:
 
 ## Step 5: Write the Wiki Note
 
-Create the file at the target path and write it **per the Page-Writing Protocol in `wiki/SKILL.md`** (frontmatter fields, summary < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks, journal + manifest). Two capture-specific points:
+Create the file at the target path and write it **per the Page-Writing Protocol in `wiki/references/page-protocol.md`** (frontmatter fields, summary < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks, journal + manifest). Two capture-specific points:
 
 - `category:` equals the folder chosen in Step 2.
 - `sources:` records the conversation as `conversation:<project>/<ISO-date>`, where `<project>` is the basename of the project directory the capture was run from (the current working directory's name, e.g. `ObsidianVault`) — so provenance records *where* the conversation happened, not just when. Result: `conversation:ObsidianVault/2026-07-04`.
@@ -253,7 +253,7 @@ from git blame across 20 commits, wiki it.*
 
 ### PS4: Distil into wiki pages
 
-Write each page per the Page-Writing Protocol in `wiki/SKILL.md`. Placement:
+Write each page per the Page-Writing Protocol in `wiki/references/page-protocol.md`. Placement:
 
 - **Project-specific** knowledge goes under `$VAULT/projects/<project-name>/`: an overview page
   `projects/<project-name>/<project-name>.md` (named after the project, **never** `_project.md`, because

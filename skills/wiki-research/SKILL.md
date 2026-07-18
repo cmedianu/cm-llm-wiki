@@ -73,7 +73,7 @@ If contradictions are minor or the topic feels well-covered after Round 2, skip 
 
 ## Filing — Write Wiki Pages
 
-Every page follows the **Page-Writing Protocol** in `wiki/SKILL.md` (frontmatter, `summary` < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks). Only the research-specific extras are called out below.
+Every page follows the **Page-Writing Protocol** in `wiki/references/page-protocol.md` (frontmatter, `summary` < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks). Only the research-specific extras are called out below.
 
 **Route to existing categories, discovered from disk.** List the vault's top-level folders (skip `_*` and `.*`) and file each page in the best-fitting **existing** folder — never scaffold a fixed `concepts/ entities/ references/` taxonomy the vault doesn't already have. Set each page's `category:` to the folder it lands in.
 

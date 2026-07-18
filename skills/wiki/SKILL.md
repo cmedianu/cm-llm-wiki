@@ -198,17 +198,9 @@ Always use vault-relative paths, not bare basenames — some basenames aren't gl
 
 ## Page-Writing Protocol
 
-Every skill that **creates or updates pages** (`wiki-ingest`, including its Claude-history mode; `wiki-capture`, including its project-sync mode; and `wiki-research`) follows this one contract rather than restating it:
+Every skill that **creates or updates pages** (`wiki-ingest`, including its Claude-history mode; `wiki-capture`, including its project-sync mode; `wiki-research`; `wiki-link` synthesis; `wiki-compact` rewrites) follows one shared contract rather than restating it. In one breath: use the **Page Template** frontmatter (`category` = the disk folder; ingest-class skills add `lifecycle: draft`), keep `summary:` **under 200 chars**, mark claims `^[inferred]`/`^[ambiguous]` (unmarked = extracted), link each new page to **≥2** existing pages via full vault-relative wikilinks, honour the privacy rules before surfacing anywhere more public, and record the change with `wiki-journal.py` + resync with `regen-manifest.py` (never hand-edit the journal or manifest). Category, `index.md` membership, and page inventory are all **discovered from disk / the manifest**, never assumed.
 
-1. **Frontmatter** — use the Page Template above. Required: `title`, `category`, `tags`, `summary`, `sources`, `created`, `updated`. `category` **equals the page's folder, discovered from disk** (never an assumed taxonomy). Ingest-class skills also set `lifecycle: draft` + `lifecycle_changed: <today>`; only a human promotes lifecycle, and it is left unchanged on update.
-2. **Summary** — 1–2 sentences, **hard limit under 200 characters** (count before writing; `wiki-lint` fails 200+). It powers `wiki-query`'s cheap retrieval, so rewrite it whenever a page's meaning shifts.
-3. **Provenance markers** — apply `^[inferred]` / `^[ambiguous]` per Provenance Markers above; unmarked = extracted. The inline markers are the whole signal — no numeric score.
-4. **Wikilinks** — link each new page to **at least two** existing pages, using full vault-relative paths per Link Format above.
-5. **Privacy** — apply Privacy & Visibility below before surfacing a page anywhere more public than itself.
-6. **Journal** — after writing, record the change with `wiki-journal.py` (see Reference); never hand-edit `log.md` / `hot.md`. You compose only the one-line conceptual entry.
-7. **Manifest** — never hand-write `.manifest.json`. After writing pages, run `regen-manifest.py` (see Reference) to resync it from disk.
-
-Category, `index.md` membership, and page inventory are all **discovered from disk / the manifest**, never assumed.
+**The full contract — everything a write-side skill needs and nothing else — lives in `references/page-protocol.md`. Read that instead of this whole theory skill when your only job is to write a page.**
 
 ## Privacy & Visibility
 
@@ -274,6 +266,7 @@ Maintenance scripts (`../../scripts/`, symlinked into vaults as `.claude/wiki-sc
 - `wiki-lint.py` — deterministic health checks (orphans, broken links, frontmatter, index, stale, lifecycle, provenance ratios). Used by `wiki-lint`.
 - `wiki-graph.py` — wikilink-graph analysis (hubs, tag cohesion, orphans, bridges, cross-category edges, delta). Used by `wiki-status` insights.
 - `regen-manifest.py` — rebuild `.manifest.json` from the filesystem. The write skills call this instead of hand-writing manifest entries.
+- `ingest-prep.py` — single-call read-only ingest prep (discovered categories, `private_paths`, per-source `manifest_status`, `index_base_backed`, keyword-matched `related_pages`); also a `--backlinks-for` mode surfacing back-link candidates for new pages. Used by `wiki-ingest`.
 - `wiki-journal.py` — mechanical `log.md` append + `hot.md` Recent-Activity prepend/trim + `updated:` bump. The write skills call this instead of hand-editing the journal; they supply only the distilled one-line entry.
 - `kebab-rename.py` — mass kebab-case rename + wikilink rewrite
 - `validate-frontmatter.py` — verify every page's YAML frontmatter parses
@@ -282,4 +275,5 @@ Maintenance scripts (`../../scripts/`, symlinked into vaults as `.claude/wiki-sc
 Reference (`references/`):
 
 - `karpathy-pattern.md` — the original LLM Wiki pattern explained
+- `page-protocol.md` — the full Page-Writing Protocol; what write-side skills read instead of this whole skill
 - `vault-mechanics.md` — config resolution, relocatability, URL snapshots, category renames (read on demand, not every op)

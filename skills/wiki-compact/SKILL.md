@@ -67,7 +67,7 @@ Rules of the road:
 
 For each approved action, in this order (merges first, so splits/archives see the merged state):
 
-1. Apply the content change per the Page-Writing Protocol in `wiki/SKILL.md` (full-path wikilinks, summary under 200 chars on any page you rewrite).
+1. Apply the content change per the Page-Writing Protocol in `wiki/references/page-protocol.md` (full-path wikilinks, summary under 200 chars on any page you rewrite).
 2. Rewire inbound links: grep the vault for wikilinks to any page you merged away or moved, and repoint them at the survivor (skip `log.md` — historical entries stay verbatim).
 3. Curated `index.md` files: remove or repoint lines for archived/merged pages (base-backed indexes need no edit).
 
