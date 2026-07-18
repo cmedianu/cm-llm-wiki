@@ -22,9 +22,13 @@ CLAUDE.md, any README.md) are allow-listed and never reported as missing.
 
 Read-only — never writes. See README.md in this directory.
 """
+import argparse
+import json
 import os
+import re
 import sys
 import pathlib
+from typing import Optional
 
 import yaml
 
@@ -32,19 +36,65 @@ import yaml
 ALLOW_NO_FRONTMATTER = {"index.md", "log.md", "hot.md", "CLAUDE.md", "AGENTS.md", "README.md"}
 
 
-def find_vault() -> pathlib.Path:
-    """Resolve the active vault by walking up from CWD looking for .manifest.json
-    (the canonical vault marker). Falls back to OBSIDIAN_VAULT_PATH for back-compat."""
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault, in priority order:
+      1. explicit --vault override (must be an existing directory);
+      2. walk up from CWD to the first dir containing .manifest.json (stop at $HOME or /);
+      3. map CWD (or nearest ancestor) via ~/.obsidian-wiki/projects.json to a vault
+         name, then read OBSIDIAN_VAULT_PATH from ~/.obsidian-wiki/config.<name>;
+      4. the OBSIDIAN_VAULT_PATH env var (back-compat).
+    Exit with a clear message if none apply."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
     cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
         if (d / ".manifest.json").is_file():
             return d
-        if d == pathlib.Path("/"):
+        if d == home or d == pathlib.Path("/"):
             break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
     env = os.environ.get("OBSIDIAN_VAULT_PATH")
     if env:
-        return pathlib.Path(env)
-    raise SystemExit("No vault found: walked up from CWD without finding .manifest.json")
+        return pathlib.Path(env).expanduser()
+    raise SystemExit(
+        "No vault found. Looked for .manifest.json walking up from the current "
+        "directory, then for a match in ~/.obsidian-wiki/projects.json. "
+        "Pass --vault <path> to point at the vault explicitly."
+    )
+
+
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) → vault via ~/.obsidian-wiki/projects.json and
+    the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no mapping applies."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    try:
+        text = (reg / f"config.{name}").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
 
 
 def check(path: pathlib.Path):
@@ -71,7 +121,15 @@ def check(path: pathlib.Path):
 
 
 def main() -> int:
-    vault = find_vault()
+    parser = argparse.ArgumentParser(
+        description="Validate the YAML frontmatter of every page in the vault.",
+    )
+    parser.add_argument(
+        "--vault", default=None,
+        help="Path to vault root. If omitted, auto-detected.",
+    )
+    args = parser.parse_args()
+    vault = resolve_vault(args.vault)
     invalid, missing, checked = [], [], 0
     for f in sorted(vault.rglob("*.md")):
         rel = f.relative_to(vault)

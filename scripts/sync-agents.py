@@ -13,8 +13,9 @@ AGENTS.md: CLAUDE.md with every import physically inlined. CLAUDE.md stays the
 hand-edited master; AGENTS.md is a build artifact of it.
 
 Usage:
-  sync-agents.py                 sync the vault found by walking up from CWD
+  sync-agents.py                 sync the auto-detected vault (see --vault chain)
   sync-agents.py VAULT [...]     sync the given vault dir(s)
+  sync-agents.py --vault PATH    sync the vault at PATH (standard resolver override)
   sync-agents.py --all           sync every vault registered in ~/.obsidian-wiki
   sync-agents.py --check [...]   report stale/missing AGENTS.md, change nothing
 
@@ -28,7 +29,9 @@ fight. Stdlib-only, any Python 3.
 import os
 import re
 import sys
+import json
 import pathlib
+from typing import Optional
 
 BANNER = (
     "<!-- GENERATED FILE - DO NOT EDIT.\n"
@@ -82,12 +85,65 @@ def registered_vaults() -> list:
     return vaults
 
 
-def vault_from_cwd() -> pathlib.Path:
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault, in priority order:
+      1. explicit --vault override (must be an existing directory);
+      2. walk up from CWD to the first dir containing .manifest.json (stop at $HOME or /);
+      3. map CWD (or nearest ancestor) via ~/.obsidian-wiki/projects.json to a vault
+         name, then read OBSIDIAN_VAULT_PATH from ~/.obsidian-wiki/config.<name>;
+      4. the OBSIDIAN_VAULT_PATH env var (back-compat).
+    Exit with a clear message if none apply."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
     cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
         if (d / ".manifest.json").is_file():
             return d
-    raise SystemExit("No vault found: walked up from CWD without finding .manifest.json")
+        if d == home or d == pathlib.Path("/"):
+            break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
+    env = os.environ.get("OBSIDIAN_VAULT_PATH")
+    if env:
+        return pathlib.Path(env).expanduser()
+    raise SystemExit(
+        "No vault found. Looked for .manifest.json walking up from the current "
+        "directory, then for a match in ~/.obsidian-wiki/projects.json. "
+        "Pass --vault <path> to point at the vault explicitly."
+    )
+
+
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) → vault via ~/.obsidian-wiki/projects.json and
+    the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no mapping applies."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    try:
+        text = (reg / f"config.{name}").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
 
 
 def split_frontmatter(text: str) -> tuple:
@@ -119,19 +175,37 @@ def sync(vault: pathlib.Path, check: bool) -> bool:
 
 
 def main():
-    args = sys.argv[1:]
-    check = "--check" in args
-    all_vaults = "--all" in args
-    paths = [a for a in args if not a.startswith("--")]
+    argv = sys.argv[1:]
+    check = "--check" in argv
+    all_vaults = "--all" in argv
+    # Extract --vault VALUE / --vault=VALUE; everything else non-flag is a positional path.
+    vault_opt = None
+    paths = []
+    i = 0
+    while i < len(argv):
+        a = argv[i]
+        if a == "--vault":
+            i += 1
+            if i < len(argv):
+                vault_opt = argv[i]
+        elif a.startswith("--vault="):
+            vault_opt = a.split("=", 1)[1]
+        elif a.startswith("--"):
+            pass
+        else:
+            paths.append(a)
+        i += 1
 
     if all_vaults:
         vaults = registered_vaults()
         if not vaults:
             raise SystemExit("no vaults registered in ~/.obsidian-wiki (config.* files)")
+    elif vault_opt:
+        vaults = [resolve_vault(vault_opt)]
     elif paths:
         vaults = [pathlib.Path(p) for p in paths]
     else:
-        vaults = [vault_from_cwd()]
+        vaults = [resolve_vault()]
 
     ok = True
     for v in vaults:

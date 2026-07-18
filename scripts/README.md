@@ -29,6 +29,7 @@ The rest cover **specific operations the skills do not implement**:
 
 | Script | Fills this gap |
 |---|---|
+| `ingest-prep.py` | One read-only call that gathers everything an ingest needs before distilling a source: categories, `private_paths`, whether the source is already tracked, which category indexes are base-backed (live queries needing no manual edit), and keyword-related pages — replacing 4–5 ad-hoc grep/shell round-trips. A backlinks mode finds link candidates for pages you just wrote. |
 | `regen-manifest.py` | Rebuild `.manifest.json` from scratch by scanning the filesystem. The skills *read* and *update* the manifest but none of them bootstraps one from an existing populated vault, or repairs one that drifted after a bulk filesystem operation done outside the tooling. |
 | `kebab-rename.py` | Mass-rename pages to kebab-case-lowercase, rewriting every wikilink and re-keying the manifest in lockstep. `wiki-lint` reports broken wikilinks but doesn't perform renames. |
 | `validate-frontmatter.py` | Verify every page's YAML frontmatter actually *parses*. Catches the unquoted colon-space (`: `) trap that silently breaks Obsidian's Properties panel — `wiki-lint` checks for *missing* summaries/frontmatter but not for syntactically *invalid* YAML. |
@@ -38,20 +39,93 @@ If a skill covers what you need, prefer the skill.
 
 ## Vault discovery
 
-All scripts pick up the active vault automatically:
+**Every script accepts `--vault <path>`** as an explicit override, and every
+script resolves the vault the same way when it is omitted. The resolution chain,
+in priority order:
 
-1. Walk up from `CWD` looking for `.manifest.json` — the canonical vault marker.
-2. Else `OBSIDIAN_VAULT_PATH` if set — backward-compat only.
+1. `--vault <path>` — explicit override (must be an existing directory). Wins over
+   everything else, including any positional vault arg and env vars.
+2. Walk up from `CWD` to the first dir containing `.manifest.json` — the canonical
+   vault marker. The walk stops at `$HOME` or `/`.
+3. Map `CWD` (or its nearest ancestor) via `~/.obsidian-wiki/projects.json`
+   (`{"project-path": "vault-name"}`) to a vault name, then read
+   `OBSIDIAN_VAULT_PATH` from `~/.obsidian-wiki/config.<vault-name>`.
+4. `OBSIDIAN_VAULT_PATH` env var — backward-compat only.
 
-That matches the Config Resolution Protocol the skills follow (see
-`skills/wiki/SKILL.md`). A default vault needs no env var or config file —
-`.manifest.json` is all it takes.
+If none apply the script exits with a consistent message telling you to pass
+`--vault`. This matches the Config Resolution Protocol the skills follow (see
+`skills/wiki/SKILL.md`). A default vault needs no env var — `.manifest.json`, a
+`projects.json` entry, or an explicit `--vault` is all it takes.
+
+Because each script is a standalone PEP 723 `uv` script (they never import one
+another), the resolver is *replicated verbatim* in each file rather than shared
+through a module — keep the copies in sync when changing it. `regen-manifest.py`
+additionally honours its legacy `REGEN_AT` bootstrap env var (between steps 3 and
+4), so a brand-new vault with no `.manifest.json` yet can still be seeded.
+
+## `ingest-prep.py`
+
+```sh
+# Prep mode — one JSON object with everything the ingest needs up front
+uv run .claude/wiki-scripts/ingest-prep.py \
+  --vault "$OBSIDIAN_VAULT_PATH" \
+  --source ~/Downloads/some-source.md \
+  --keywords "ssh,yubikey,1password"
+
+# Backlinks mode — link candidates for pages you just wrote
+uv run .claude/wiki-scripts/ingest-prep.py \
+  --vault "$OBSIDIAN_VAULT_PATH" \
+  --backlinks-for "sysadmin/page-a.md,sysadmin/page-b.md"
+```
+
+```powershell
+uv run .claude\wiki-scripts\ingest-prep.py --vault $env:OBSIDIAN_VAULT_PATH --source C:\path\src.md --keywords "ssh,yubikey"
+```
+
+A read-only, single-call prep tool that replaces the pile of grep/`ls`/`cat`
+round-trips a skill otherwise runs at the start of an ingest. Emits JSON to
+stdout; `--vault` follows the standard resolution chain when omitted. Exactly one
+of `--source` (prep mode) or `--backlinks-for` (backlinks mode) is required.
+
+**Prep mode** (`--source <file>`, optional `--keywords "k1,k2"`) returns one object:
+
+- `vault` — resolved vault path; `source` — the source path as given.
+- `categories` — top-level category dirs (skips `_*` and `.*`).
+- `private_paths` — from `.manifest.json` (empty list if absent).
+- `manifest_status` — `new` (source not tracked), `modified` (tracked but
+  `size_bytes`/`mtime` differ), or `unchanged`. Matched by vault-relative path,
+  then `_sources/<basename>`, then any manifest key sharing the basename (so a
+  source living outside the vault, or a raw `_sources/` file whose distilled page
+  is what's tracked, still resolves). `manifest_key` reports which key matched.
+- `index_base_backed` — `category → true/false`; `true` when the category's
+  `index.md` embeds a ` ```base ` fence (an Obsidian Bases live query that lists
+  pages for you, so no manual index edit is needed), `false` for hand-curated or
+  missing indexes.
+- `related_pages` — only when `--keywords` is given. Pages matching any keyword
+  (case-insensitive) in title, tags, summary, filename, or body, as
+  `[{path, summary}]`, strongest-first (a frontmatter/title/filename hit outranks
+  a body-only hit), capped at ~20.
+
+**Backlinks mode** (`--backlinks-for "a.md,b.md"`, vault-relative pages) returns
+`[{page, candidate, matched_term}]`: for each listed page, the OTHER content pages
+whose body mentions a *distinctive* term from the page's title or filename stem
+(stopwords and words < 4 chars are dropped) but that contain no `[[…]]` wikilink
+back to it — i.e. missing-backlink candidates. `index.md` / `log.md` / `hot.md`
+and anything under `_*` dirs are excluded. "Distinctive" is enforced with a
+document-frequency cap (a term appearing in > 15% of pages, e.g. `agent` or
+`windows`, is treated as generic and skipped) so the output stays focused instead
+of flagging half the vault — this DF guard is an addition beyond a pure
+stopword/length filter, made so the tool returns usable candidates.
+
+Read-only; never writes. Needs `pyyaml` via the PEP 723 header.
 
 ## `wiki-lint.py`
 
 ```sh
 uv run .claude/wiki-scripts/wiki-lint.py              # JSON report (default)
 uv run .claude/wiki-scripts/wiki-lint.py --format md  # human-readable report
+uv run .claude/wiki-scripts/wiki-lint.py --vault "$OBSIDIAN_VAULT_PATH" \
+  --pages "sysadmin/page-a.md" "sysadmin/home-network/*.md"  # scope the report
 ```
 
 ```powershell
@@ -76,6 +150,15 @@ lists it. No `private_paths` → both behave exactly as before. The key survives
 `regen-manifest.py`. The `wiki-lint` skill calls this, then adds the judgement-only
 checks it can't: contradictions, provenance interpretation, and visibility/PII.
 Read-only; never writes. Needs `pyyaml` via the PEP 723 header — nothing to install.
+
+**`--pages <path|glob> …`** scopes the *report* to the given vault-relative pages
+(literal paths or globs). Per-page checks (frontmatter, summary, broken outgoing
+links, etc.) then apply only to those pages, while graph-wide checks (orphans,
+incoming links, index coverage) still compute against the whole vault and are
+merely filtered down to findings about the listed pages — so a page isn't falsely
+flagged an orphan just because you narrowed the view. `pages_checked` reflects the
+scoped count. Without `--pages`, behaviour and output shape are exactly as before.
+A positional vault path still works; `--vault` overrides it.
 
 ## `wiki-graph.py`
 
@@ -119,8 +202,9 @@ Stdlib only; no `pyyaml`.
 ## `regen-manifest.py`
 
 ```sh
-cd /path/to/vault          # or set OBSIDIAN_VAULT_PATH
-uv run .claude/wiki-scripts/regen-manifest.py  # or: DRY_RUN=1 uv run .claude/wiki-scripts/regen-manifest.py
+uv run .claude/wiki-scripts/regen-manifest.py --vault /path/to/vault           # explicit
+uv run .claude/wiki-scripts/regen-manifest.py --vault /path/to/vault --dry-run  # preview
+cd /path/to/vault && uv run .claude/wiki-scripts/regen-manifest.py              # or auto-detect
 ```
 
 ```powershell
@@ -142,12 +226,15 @@ Prints added / removed / modified / unchanged counts.
 Idempotent. Running it twice produces no second-pass changes other than the
 top-level `updated` timestamp.
 
+`--vault` selects the target (standard resolution chain when omitted, plus the
+legacy `REGEN_AT` bootstrap for seeding a not-yet-created vault); `--dry-run` is
+the flag form of `DRY_RUN=1`. Both env vars still work for backward compat.
+
 ## `kebab-rename.py`
 
 ```sh
-cd /path/to/vault
-DRY_RUN=1 uv run .claude/wiki-scripts/kebab-rename.py   # always preview first
-APPLY=1   uv run .claude/wiki-scripts/kebab-rename.py
+uv run .claude/wiki-scripts/kebab-rename.py --vault /path/to/vault --dry-run   # always preview first
+uv run .claude/wiki-scripts/kebab-rename.py --vault /path/to/vault --apply
 ```
 
 ```powershell
@@ -158,7 +245,9 @@ $env:DRY_RUN=1; uv run .claude\wiki-scripts\kebab-rename.py; Remove-Item Env:DRY
 $env:APPLY=1;   uv run .claude\wiki-scripts\kebab-rename.py; Remove-Item Env:APPLY
 ```
 
-Refuses to run without exactly one of `DRY_RUN=1` or `APPLY=1`.
+Refuses to run without exactly one of `--dry-run`/`DRY_RUN=1` or `--apply`/`APPLY=1`
+(the `--dry-run` / `--apply` flags are the flag form of the env vars; `--vault`
+selects the target, auto-detected when omitted).
 
 Performs three coordinated actions:
 
@@ -190,7 +279,8 @@ intermediate. If you write a new rename script, replicate this pattern.
 ## `validate-frontmatter.py`
 
 ```sh
-uv run .claude/wiki-scripts/validate-frontmatter.py   # from anywhere in the vault
+uv run .claude/wiki-scripts/validate-frontmatter.py                    # from anywhere in the vault
+uv run .claude/wiki-scripts/validate-frontmatter.py --vault /path/vault # explicit target
 ```
 
 ```powershell
@@ -220,9 +310,10 @@ Unlike the stdlib scripts this one needs `pyyaml`; the PEP 723 header makes
 ## `sync-agents.py`
 
 ```sh
-uv run .claude/wiki-scripts/sync-agents.py           # sync the vault you're in
-uv run /path/to/repo/scripts/sync-agents.py --all    # sync every registered vault
-uv run .claude/wiki-scripts/sync-agents.py --check   # report drift, change nothing
+uv run .claude/wiki-scripts/sync-agents.py                    # sync the auto-detected vault
+uv run .claude/wiki-scripts/sync-agents.py --vault /path/vault # sync a specific vault
+uv run /path/to/repo/scripts/sync-agents.py --all             # sync every registered vault
+uv run .claude/wiki-scripts/sync-agents.py --check            # report drift, change nothing
 ```
 
 ```powershell

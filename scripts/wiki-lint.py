@@ -82,22 +82,68 @@ _FENCE_RE = re.compile(r"^```")
 
 
 # ---------------------------------------------------------------------------
-# Vault discovery (same logic as validate-frontmatter.py)
+# Vault discovery (standard resolver, replicated verbatim across scripts/)
 # ---------------------------------------------------------------------------
 
-def find_vault() -> pathlib.Path:
-    """Resolve the active vault by walking up from CWD looking for .manifest.json
-    (the canonical vault marker). Falls back to OBSIDIAN_VAULT_PATH for back-compat."""
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault, in priority order:
+      1. explicit --vault override (must be an existing directory);
+      2. walk up from CWD to the first dir containing .manifest.json (stop at $HOME or /);
+      3. map CWD (or nearest ancestor) via ~/.obsidian-wiki/projects.json to a vault
+         name, then read OBSIDIAN_VAULT_PATH from ~/.obsidian-wiki/config.<name>;
+      4. the OBSIDIAN_VAULT_PATH env var (back-compat).
+    Exit with a clear message if none apply."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
     cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
         if (d / ".manifest.json").is_file():
             return d
-        if d == pathlib.Path("/"):
+        if d == home or d == pathlib.Path("/"):
             break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
     env = os.environ.get("OBSIDIAN_VAULT_PATH")
     if env:
-        return pathlib.Path(env)
-    raise SystemExit("No vault found: walked up from CWD without finding .manifest.json")
+        return pathlib.Path(env).expanduser()
+    raise SystemExit(
+        "No vault found. Looked for .manifest.json walking up from the current "
+        "directory, then for a match in ~/.obsidian-wiki/projects.json. "
+        "Pass --vault <path> to point at the vault explicitly."
+    )
+
+
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) → vault via ~/.obsidian-wiki/projects.json and
+    the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no mapping applies."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    try:
+        text = (reg / f"config.{name}").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -1086,26 +1132,50 @@ def format_json(vault: pathlib.Path, findings: list[dict], provenance: list[dict
 # Main
 # ---------------------------------------------------------------------------
 
+def resolve_page_globs(vault: pathlib.Path, patterns: list[str]) -> set[str]:
+    """Expand --pages patterns (vault-relative paths or globs) to a set of
+    vault-relative posix paths that exist. Warns on patterns matching nothing."""
+    selected: set[str] = set()
+    for pat in patterns:
+        matched = False
+        direct = vault / pat
+        if direct.is_file():
+            selected.add(direct.relative_to(vault).as_posix())
+            matched = True
+        else:
+            for m in vault.glob(pat):
+                if m.is_file():
+                    selected.add(m.relative_to(vault).as_posix())
+                    matched = True
+        if not matched:
+            print(f"warning: --pages pattern matched no files: {pat}", file=sys.stderr)
+    return selected
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Deterministic linter for an Obsidian LLM-wiki vault.",
     )
     parser.add_argument(
         "vault", nargs="?", default=None,
-        help="Path to vault root. If omitted, auto-detected via .manifest.json walk-up.",
+        help="Path to vault root (positional). If omitted, auto-detected.",
+    )
+    parser.add_argument(
+        "--vault", dest="vault_flag", default=None,
+        help="Path to vault root. Overrides the positional arg and auto-detection.",
     )
     parser.add_argument(
         "--format", choices=["json", "md"], default="json",
         help="Output format: json (default) or md (markdown report).",
     )
+    parser.add_argument(
+        "--pages", nargs="+", metavar="PATH",
+        help="One or more vault-relative paths or globs. Scopes REPORTED findings to "
+             "just these pages; graph-wide checks still compute against the full vault.",
+    )
     args = parser.parse_args()
 
-    if args.vault:
-        vault = pathlib.Path(args.vault).resolve()
-        if not vault.is_dir():
-            raise SystemExit(f"Vault path does not exist or is not a directory: {vault}")
-    else:
-        vault = find_vault()
+    vault = resolve_vault(args.vault_flag or args.vault)
 
     # Collect all .md files, build content page list
     all_md: list[pathlib.Path] = []
@@ -1158,6 +1228,15 @@ def main() -> int:
     all_findings.extend(check_index_privacy_leak(vault, content_pages, resolve, private_paths))
 
     pages_checked = len(content_pages)
+
+    # --pages: everything above computed against the whole vault (so graph-wide
+    # checks — orphans, incoming links, index coverage — stay correct); now scope
+    # what we REPORT down to the requested pages by their file key.
+    if args.pages:
+        page_filter = resolve_page_globs(vault, args.pages)
+        all_findings = [f for f in all_findings if f["file"] in page_filter]
+        provenance_records = [p for p in provenance_records if p["file"] in page_filter]
+        pages_checked = len(page_filter)
 
     if args.format == "md":
         print(format_md(vault, all_findings, provenance_records, pages_checked))

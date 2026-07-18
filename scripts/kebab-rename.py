@@ -19,6 +19,7 @@ Also rewrites:
 
 See README.md in this directory for usage and knob explanations.
 """
+import argparse
 import os
 import re
 import sys
@@ -27,28 +28,80 @@ import datetime
 import shutil
 import unicodedata
 import pathlib
+from typing import Optional
 
 
-def find_vault() -> pathlib.Path:
-    """Resolve the active vault by walking up from CWD looking for .manifest.json
-    (the canonical vault marker). Falls back to the OBSIDIAN_VAULT_PATH env var
-    for backward compatibility, but a default vault needs neither."""
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault, in priority order:
+      1. explicit --vault override (must be an existing directory);
+      2. walk up from CWD to the first dir containing .manifest.json (stop at $HOME or /);
+      3. map CWD (or nearest ancestor) via ~/.obsidian-wiki/projects.json to a vault
+         name, then read OBSIDIAN_VAULT_PATH from ~/.obsidian-wiki/config.<name>;
+      4. the OBSIDIAN_VAULT_PATH env var (back-compat).
+    Exit with a clear message if none apply."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
     cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
         if (d / ".manifest.json").is_file():
             return d
-        if d == pathlib.Path("/"):
+        if d == home or d == pathlib.Path("/"):
             break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
     env = os.environ.get("OBSIDIAN_VAULT_PATH")
     if env:
-        return pathlib.Path(env)
-    raise SystemExit("No vault found: walked up from CWD without finding .manifest.json")
+        return pathlib.Path(env).expanduser()
+    raise SystemExit(
+        "No vault found. Looked for .manifest.json walking up from the current "
+        "directory, then for a match in ~/.obsidian-wiki/projects.json. "
+        "Pass --vault <path> to point at the vault explicitly."
+    )
 
 
-VAULT = find_vault()
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) → vault via ~/.obsidian-wiki/projects.json and
+    the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no mapping applies."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    try:
+        text = (reg / f"config.{name}").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
+
+
+_ARGS = argparse.ArgumentParser(description="Rename content pages to kebab-case and rewrite wikilinks.")
+_ARGS.add_argument("--vault", default=None, help="Path to vault root. Overrides auto-detection.")
+_ARGS.add_argument("--dry-run", action="store_true", help="Preview only (same as DRY_RUN=1).")
+_ARGS.add_argument("--apply", action="store_true", help="Perform the renames (same as APPLY=1).")
+_ns = _ARGS.parse_args()
+
+VAULT = resolve_vault(_ns.vault)
 LOG_FILE = "log.md"                          # left as-is (historical record)
-DRY = os.environ.get("DRY_RUN") == "1"
-APPLY = os.environ.get("APPLY") == "1"
+DRY = _ns.dry_run or os.environ.get("DRY_RUN") == "1"
+APPLY = _ns.apply or os.environ.get("APPLY") == "1"
 
 # Optional folder renames applied alongside the file renames.
 #   Example: {"Notes/MyOldFolderName": "Notes/my-new-folder-name"}
@@ -171,7 +224,7 @@ def rewrite_wikilinks(text, path_map, basename_map, current_file_rel, problems):
 
 def main():
     if not DRY and not APPLY:
-        print("ERROR: set DRY_RUN=1 (preview) or APPLY=1 (do it). Refusing to proceed.", file=sys.stderr)
+        print("ERROR: pass --dry-run (preview) or --apply (do it) — or set DRY_RUN=1 / APPLY=1. Refusing to proceed.", file=sys.stderr)
         sys.exit(2)
 
     path_map = build_path_mapping()

@@ -23,7 +23,8 @@ Usage
 
 Notes
 -----
-* `--vault` defaults to the current directory; log.md / hot.md must sit at its root.
+* `--vault` defaults to the auto-detected vault (walk up from CWD for .manifest.json,
+  then ~/.obsidian-wiki/projects.json); log.md / hot.md must sit at its root.
 * The log timestamp is real wall-clock UTC (ISO-8601 `...Z`), or date-only with
   `--date-only`. hot.md's `updated:` is always set to today's date (UTC).
 * hot.md is created from a minimal template if missing. log.md is created empty.
@@ -35,11 +36,76 @@ Notes
 
 import argparse
 import datetime as _dt
+import json
+import os
+import pathlib
 import re
 import sys
 from pathlib import Path
+from typing import Optional
 
 RECENT_HEADING = "## Recent Activity"
+
+
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault, in priority order:
+      1. explicit --vault override (must be an existing directory);
+      2. walk up from CWD to the first dir containing .manifest.json (stop at $HOME or /);
+      3. map CWD (or nearest ancestor) via ~/.obsidian-wiki/projects.json to a vault
+         name, then read OBSIDIAN_VAULT_PATH from ~/.obsidian-wiki/config.<name>;
+      4. the OBSIDIAN_VAULT_PATH env var (back-compat).
+    Exit with a clear message if none apply."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
+    cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
+    for d in [cwd] + list(cwd.parents):
+        if (d / ".manifest.json").is_file():
+            return d
+        if d == home or d == pathlib.Path("/"):
+            break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
+    env = os.environ.get("OBSIDIAN_VAULT_PATH")
+    if env:
+        return pathlib.Path(env).expanduser()
+    raise SystemExit(
+        "No vault found. Looked for .manifest.json walking up from the current "
+        "directory, then for a match in ~/.obsidian-wiki/projects.json. "
+        "Pass --vault <path> to point at the vault explicitly."
+    )
+
+
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) → vault via ~/.obsidian-wiki/projects.json and
+    the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no mapping applies."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    try:
+        text = (reg / f"config.{name}").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
 
 HOT_TEMPLATE = """---
 title: Hot Cache
@@ -237,7 +303,7 @@ def update_hot(vault: Path, entry: str | None, date: str, trim: int | None) -> d
 
 def main() -> int:
     ap = argparse.ArgumentParser(description="Mechanical log.md / hot.md updater.")
-    ap.add_argument("--vault", default=".", help="vault root (default: cwd)")
+    ap.add_argument("--vault", default=None, help="vault root (default: auto-detected via .manifest.json walk-up / projects.json)")
     ap.add_argument("--log", metavar="BODY", help='log line body after the timestamp, e.g. \'INGEST source="..." ...\'')
     ap.add_argument("--hot-entry", metavar="TEXT", help="Recent Activity bullet body (no leading '- ')")
     ap.add_argument("--hot-trim", type=int, metavar="N", help="keep only the newest N Recent Activity entries")
@@ -252,10 +318,7 @@ def main() -> int:
     if args.log_trim is not None and args.log_trim < 0:
         ap.error("--log-trim must be >= 0")
 
-    vault = Path(args.vault).resolve()
-    if not vault.is_dir():
-        print(f"error: vault not found: {vault}", file=sys.stderr)
-        return 2
+    vault = resolve_vault(args.vault)
 
     out: list[str] = []
     if args.log:

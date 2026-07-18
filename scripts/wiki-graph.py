@@ -50,7 +50,7 @@ import pathlib
 import re
 import sys
 from collections import defaultdict
-from typing import Any
+from typing import Any, Optional
 
 import yaml
 
@@ -60,22 +60,68 @@ import yaml
 SCAFFOLD_BASENAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
 
 # ---------------------------------------------------------------------------
-# Vault discovery — identical logic to validate-frontmatter.py
+# Vault discovery (standard resolver, replicated verbatim across scripts/)
 # ---------------------------------------------------------------------------
 
-def find_vault() -> pathlib.Path:
-    """Resolve the active vault by walking up from CWD looking for .manifest.json
-    (the canonical vault marker). Falls back to OBSIDIAN_VAULT_PATH for back-compat."""
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault, in priority order:
+      1. explicit --vault override (must be an existing directory);
+      2. walk up from CWD to the first dir containing .manifest.json (stop at $HOME or /);
+      3. map CWD (or nearest ancestor) via ~/.obsidian-wiki/projects.json to a vault
+         name, then read OBSIDIAN_VAULT_PATH from ~/.obsidian-wiki/config.<name>;
+      4. the OBSIDIAN_VAULT_PATH env var (back-compat).
+    Exit with a clear message if none apply."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
     cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
         if (d / ".manifest.json").is_file():
             return d
-        if d == pathlib.Path("/"):
+        if d == home or d == pathlib.Path("/"):
             break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
     env = os.environ.get("OBSIDIAN_VAULT_PATH")
     if env:
-        return pathlib.Path(env)
-    raise SystemExit("No vault found: walked up from CWD without finding .manifest.json")
+        return pathlib.Path(env).expanduser()
+    raise SystemExit(
+        "No vault found. Looked for .manifest.json walking up from the current "
+        "directory, then for a match in ~/.obsidian-wiki/projects.json. "
+        "Pass --vault <path> to point at the vault explicitly."
+    )
+
+
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) → vault via ~/.obsidian-wiki/projects.json and
+    the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no mapping applies."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    try:
+        text = (reg / f"config.{name}").read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -639,7 +685,11 @@ def main() -> int:
     )
     parser.add_argument(
         "vault", nargs="?", default=None,
-        help="Path to vault root (default: auto-detect via .manifest.json walk-up)",
+        help="Path to vault root (positional). If omitted, auto-detected.",
+    )
+    parser.add_argument(
+        "--vault", dest="vault_flag", default=None,
+        help="Path to vault root. Overrides the positional arg and auto-detection.",
     )
     parser.add_argument(
         "--format", choices=["json", "md"], default="json",
@@ -647,13 +697,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    if args.vault:
-        vault = pathlib.Path(args.vault).resolve()
-    else:
-        vault = find_vault()
-
-    if not vault.is_dir():
-        raise SystemExit(f"Vault path does not exist or is not a directory: {vault}")
+    vault = resolve_vault(args.vault_flag or args.vault)
 
     # Load previous snapshot
     snap_path = snapshot_path(vault)
