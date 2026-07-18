@@ -38,9 +38,9 @@ Decision log for the wiki tooling. Git history answers *what changed*; this file
 
 **Context:** The manifest tracks wiki *pages*, not raw `_sources/` files, so a source living outside the vault (a tmp dir, a download) has no manifest key to delta against directly.
 
-**Decision:** `ingest-prep.py` falls back to matching the source's basename against existing page keys and reports `modified` with the matched `manifest_key`.
+**Decision:** `ingest-prep.py` settles external sources byte-level first: when an on-disk `_sources/<basename>` snapshot exists, identical content → `unchanged`, differing → `modified` — the snapshot, not manifest timestamps, is the ground truth for "already ingested" (a first test run of the flow showed timestamp-based matching alone could never say `unchanged` for external sources). Only without a snapshot does it fall back to matching the basename against existing page keys.
 
-**Consequences:** `modified` here means "this source already produced pages — merge, don't duplicate," not "the source file's content changed." Paired rule in the ingest skill: snapshot external sources into `_sources/` and key `sources:` frontmatter on the vault-relative snapshot path, so provenance never dangles when tmp dirs vanish.
+**Consequences:** `modified` means "this source already produced pages and its content changed — merge, don't duplicate"; `unchanged` means skip. The prep JSON reports the `snapshot` path alongside `manifest_key`. Paired rule in the ingest skill: snapshot external sources into `_sources/` and key `sources:` frontmatter on the vault-relative snapshot path, so provenance never dangles when tmp dirs vanish.
 
 ## 2026-07-17 — dense sources restructure; they don't shrink
 

@@ -232,7 +232,12 @@ def manifest_status(vault: pathlib.Path, source: pathlib.Path) -> tuple[str, Opt
 
     Match order: exact vault-relative path, then '_sources/<basename>', then any
     manifest key sharing the source's basename (covers a source that lives outside
-    the vault, or a raw _sources/ file whose distilled page is tracked instead)."""
+    the vault, or a raw _sources/ file whose distilled page is tracked instead).
+
+    External sources (outside the vault) are settled byte-level first: when a
+    '_sources/<basename>' snapshot exists on disk, identical content means
+    'unchanged' regardless of manifest timestamps — the snapshot, not the
+    manifest entry, is the ground truth for 'has this already been ingested'."""
     try:
         data = json.loads((vault / ".manifest.json").read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -256,6 +261,17 @@ def manifest_status(vault: pathlib.Path, source: pathlib.Path) -> tuple[str, Opt
         by_base = [k for k in sources if k.rsplit("/", 1)[-1] == base]
         if by_base:
             key = sorted(by_base)[0]
+
+    # External source with an on-disk _sources/ snapshot: byte-compare settles it.
+    if rel is None:
+        snap = vault / "_sources" / base
+        if snap.is_file():
+            try:
+                if snap.read_bytes() == src.read_bytes():
+                    return ("unchanged", key or f"_sources/{base}")
+                return ("modified", key or f"_sources/{base}")
+            except OSError:
+                pass
 
     if key is None:
         return ("new", None)
@@ -308,6 +324,7 @@ def related_pages(vault: pathlib.Path, keywords: list[str]) -> list[dict]:
 def prep_mode(vault: pathlib.Path, source: pathlib.Path, keywords: list[str]) -> dict:
     categories = top_level_categories(vault)
     status, key = manifest_status(vault, source)
+    snap = vault / "_sources" / source.name
     out = {
         "vault": str(vault),
         "source": str(source),
@@ -315,6 +332,7 @@ def prep_mode(vault: pathlib.Path, source: pathlib.Path, keywords: list[str]) ->
         "private_paths": load_private_paths(vault),
         "manifest_status": status,
         "manifest_key": key,
+        "snapshot": f"_sources/{source.name}" if snap.is_file() else None,
         "index_base_backed": category_base_backed(vault, categories),
     }
     if keywords:

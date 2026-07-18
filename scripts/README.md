@@ -97,6 +97,12 @@ of `--source` (prep mode) or `--backlinks-for` (backlinks mode) is required.
   then `_sources/<basename>`, then any manifest key sharing the basename (so a
   source living outside the vault, or a raw `_sources/` file whose distilled page
   is what's tracked, still resolves). `manifest_key` reports which key matched.
+  For a source **outside the vault**, an on-disk `_sources/<basename>` snapshot
+  settles the verdict byte-level first: identical content → `unchanged`,
+  differing → `modified` — the snapshot, not manifest timestamps, is the ground
+  truth for "already ingested".
+- `snapshot` — vault-relative `_sources/<basename>` when that snapshot exists on
+  disk, else `null`.
 - `index_base_backed` — `category → true/false`; `true` when the category's
   `index.md` embeds a ` ```base ` fence (an Obsidian Bases live query that lists
   pages for you, so no manual index edit is needed), `false` for hand-curated or
