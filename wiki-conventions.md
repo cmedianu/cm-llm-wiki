@@ -30,6 +30,10 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
 - **Filenames:** kebab-case-lowercase. Spaces, emoji, and special chars stripped; brand
   names kept as one word (e.g. `vscode`, `libgen`).
 - **Frontmatter:** every page has it. Don't create pages without it.
+- **Date fields are date-only (`yyyy-MM-dd`).** `created:` and `updated:` (and any other
+  date value) are written as `2026-07-20`, **never** as a full ISO datetime
+  (`2026-07-20T00:00:00Z`). This matches the `update-timestamp.py` hook, which already stamps `updated:`
+  date-only. The page-protocol template shows ISO datetimes — ignore that here; date-only wins.
 - **Frontmatter values with a colon-space (`: `) must be quoted or rewritten.** In YAML
   `: ` is the key/value separator, so an unquoted value like `title: Acme: A Platform`
   or `summary: site: operators ...` is a parse error and Obsidian silently fails to render
