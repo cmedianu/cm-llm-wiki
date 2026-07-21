@@ -1,0 +1,301 @@
+#!/usr/bin/env -S uv run --script
+# /// script
+# requires-python = ">=3.8"
+# dependencies = []
+# ///
+"""Search the vault by frontmatter fields and file path.
+
+Usage:
+    wiki.search kw1                 # match pages whose tags or path contain kw1
+    wiki.search kw1 kw2             # implied OR — match either keyword
+    wiki.search kw1 or kw2          # same as above
+    wiki.search kw1 and kw2         # AND — every keyword must match
+
+By default only frontmatter `tags` and the vault-relative `path` are searched.
+Widen the surface with --all (title, aliases, tags, summary + path) or a custom
+--fields list. Matching is case-insensitive substring; `and`/`or` are operator
+words (any `and` switches the whole query to AND mode — mixing is not supported).
+
+Results are ranked by match quality (exact title/alias/tag beats a partial tag
+beats a path/summary substring). Use --paths for a bare, pipe-friendly list.
+
+Vault discovery (in priority order):
+    1. --vault <path>
+    2. walk up from CWD to the first dir containing .manifest.json
+    3. map CWD via ~/.obsidian-wiki/projects.json to config.<name>
+    4. OBSIDIAN_VAULT_PATH env var
+    5. the default vault: ~/.obsidian-wiki/config -> OBSIDIAN_VAULT_PATH
+"""
+import argparse
+import json
+import os
+import pathlib
+import re
+import sys
+from typing import Dict, List, Optional, Tuple
+
+# Scaffolding basenames skipped everywhere — same set as the other wiki scripts.
+SCAFFOLD = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+
+# Searchable frontmatter fields and whether each is a list or a scalar.
+LIST_FIELDS = {"tags", "aliases"}
+SCALAR_FIELDS = {"title", "summary"}
+ALL_FIELDS = ["title", "aliases", "tags", "summary"]
+DEFAULT_FIELDS = ["tags"]
+
+# Per-field scoring: (exact-match weight, partial-match weight). `path` is always
+# searched; scalars have no meaningful "exact" so exact == partial.
+WEIGHTS = {
+    "title": (100, 40),
+    "aliases": (90, 35),
+    "tags": (80, 30),
+    "summary": (15, 15),
+    "path": (25, 20),
+}
+
+
+def _vault_from_config(cfg: pathlib.Path) -> Optional[pathlib.Path]:
+    """Read OBSIDIAN_VAULT_PATH from a config file (follows the `config` symlink)."""
+    try:
+        text = cfg.read_text(encoding="utf-8")
+    except OSError:
+        return None
+    for line in text.splitlines():
+        m = re.match(r"^\s*OBSIDIAN_VAULT_PATH=(.+)$", line.strip())
+        if m:
+            return pathlib.Path(m.group(1).strip()).expanduser()
+    return None
+
+
+def _vault_from_projects(start: pathlib.Path) -> Optional[pathlib.Path]:
+    """Map CWD (or nearest ancestor) -> vault via ~/.obsidian-wiki/projects.json
+    and the referenced config.<name>'s OBSIDIAN_VAULT_PATH. None if no match."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    try:
+        projects = json.loads((reg / "projects.json").read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(projects, dict):
+        return None
+    name = None
+    for d in [start] + list(start.parents):
+        if str(d) in projects:
+            name = projects[str(d)]
+            break
+    if not name:
+        return None
+    return _vault_from_config(reg / f"config.{name}")
+
+
+def default_vault() -> Optional[pathlib.Path]:
+    """The registry's default vault: ~/.obsidian-wiki/config -> OBSIDIAN_VAULT_PATH."""
+    return _vault_from_config(pathlib.Path.home() / ".obsidian-wiki" / "config")
+
+
+def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
+    """Resolve the active vault; fall back to the default vault (see module docstring)."""
+    if explicit:
+        v = pathlib.Path(explicit).expanduser().resolve()
+        if not v.is_dir():
+            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
+        return v
+    cwd = pathlib.Path.cwd()
+    home = pathlib.Path.home()
+    for d in [cwd] + list(cwd.parents):
+        if (d / ".manifest.json").is_file():
+            return d
+        if d == home or d == pathlib.Path("/"):
+            break
+    v = _vault_from_projects(cwd)
+    if v is not None:
+        return v
+    env = os.environ.get("OBSIDIAN_VAULT_PATH")
+    if env:
+        return pathlib.Path(env).expanduser()
+    v = default_vault()
+    if v is not None and v.is_dir():
+        return v
+    raise SystemExit(
+        "No vault found. Pass --vault <path>, run from inside a vault, or point "
+        "~/.obsidian-wiki/config at a config.<name> with OBSIDIAN_VAULT_PATH set."
+    )
+
+
+def parse_query(tokens: List[str]) -> Tuple[str, List[str]]:
+    """Split raw args into (mode, keywords). mode is 'and' or 'or'."""
+    mode = "or"
+    keywords = []
+    for tok in tokens:
+        low = tok.lower()
+        if low == "and":
+            mode = "and"
+            continue
+        if low == "or":
+            continue
+        keywords.append(low)
+    return mode, keywords
+
+
+def _get_list(lines: List[str], idx: int, rest: str) -> List[str]:
+    """Parse a YAML list value (inline `[a, b]` or a following `  - x` block)."""
+    out: List[str] = []
+    if rest.startswith("[") and rest.endswith("]"):
+        out += [t.strip().strip("'\"") for t in rest[1:-1].split(",") if t.strip()]
+    elif rest and rest not in ("|", ">"):
+        out.append(rest.strip("'\""))
+    else:
+        for follow in lines[idx + 1:]:
+            lm = re.match(r"^\s*-\s+(.*)$", follow)
+            if lm:
+                out.append(lm.group(1).strip().strip("'\""))
+                continue
+            if re.match(r"^\S+:", follow):  # next top-level key ends the block
+                break
+    return [t for t in out if t]
+
+
+def extract_frontmatter(text: str) -> Dict[str, object]:
+    """Return the searchable frontmatter fields of a page as a dict."""
+    fm: Dict[str, object] = {}
+    if not text.startswith("---"):
+        return fm
+    end = text.find("\n---", 3)
+    if end == -1:
+        return fm
+    lines = text[3:end].splitlines()
+    for i, line in enumerate(lines):
+        m = re.match(r"^([A-Za-z_]+):\s*(.*)$", line)
+        if not m:
+            continue
+        key, rest = m.group(1), m.group(2).strip()
+        if key in LIST_FIELDS:
+            fm[key] = _get_list(lines, i, rest)
+        elif key in SCALAR_FIELDS and rest:
+            fm[key] = rest.strip("'\"")
+    return fm
+
+
+def kw_score(kw: str, field: str, value) -> int:
+    """Best score for one keyword against one field's value (0 = no match)."""
+    exact_w, partial_w = WEIGHTS[field]
+    if isinstance(value, list):
+        best = 0
+        for item in value:
+            low = item.lower()
+            if kw == low:
+                return exact_w
+            if kw in low:
+                best = max(best, partial_w)
+        return best
+    low = str(value).lower()
+    if kw == low:
+        return exact_w
+    return partial_w if kw in low else 0
+
+
+def score_page(
+    keywords: List[str], mode: str, fm: Dict[str, object], rel_lower: str,
+    fields: List[str],
+) -> int:
+    """Total relevance score, or 0 if the page fails the and/or predicate."""
+    total = 0
+    matched_all = True
+    for kw in keywords:
+        best = kw_score(kw, "path", rel_lower)
+        for f in fields:
+            if f in fm:
+                best = max(best, kw_score(kw, f, fm[f]))
+        if best == 0:
+            matched_all = False
+        total += best
+    if mode == "and" and not matched_all:
+        return 0
+    if mode == "or" and total == 0:
+        return 0
+    return total
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(
+        prog="wiki.search",
+        description="Search vault pages by frontmatter fields and path.",
+    )
+    ap.add_argument("-V", "--vault", default=None, help="Vault root; overrides auto-detection.")
+    ap.add_argument("-a", "--all", action="store_true",
+                    help="Search title, aliases, tags, and summary (plus path).")
+    ap.add_argument("-f", "--fields", default=None,
+                    help="Comma list of frontmatter fields to search (default: tags). "
+                         "Valid: " + ", ".join(ALL_FIELDS) + ". path is always searched.")
+    ap.add_argument("-p", "--paths", action="store_true",
+                    help="Print bare relative paths only (pipe-friendly, no summary line).")
+    ap.add_argument("-n", "--limit", type=int, default=0, metavar="N",
+                    help="Cap output to the N highest-ranked matches.")
+    ap.add_argument("terms", nargs="*", help="Keywords, optionally joined by and/or.")
+    ns = ap.parse_args()
+
+    mode, keywords = parse_query(ns.terms)
+    if not keywords:
+        ap.print_help(sys.stderr)
+        dv = default_vault()
+        print(f"\nDefault vault: {dv if dv else '(not configured)'}", file=sys.stderr)
+        try:
+            resolved = resolve_vault(ns.vault)
+            if resolved != dv:
+                print(f"From here, resolves to: {resolved}", file=sys.stderr)
+        except SystemExit:
+            pass
+        return 2
+
+    if ns.all:
+        fields = list(ALL_FIELDS)
+    elif ns.fields:
+        fields = [f.strip() for f in ns.fields.split(",") if f.strip()]
+        bad = [f for f in fields if f not in ALL_FIELDS]
+        if bad:
+            raise SystemExit(
+                f"Unknown --fields: {', '.join(bad)}. Valid: {', '.join(ALL_FIELDS)}."
+            )
+    else:
+        fields = list(DEFAULT_FIELDS)
+
+    vault = resolve_vault(ns.vault)
+
+    scored = []
+    for p in sorted(vault.rglob("*.md")):
+        rel = p.relative_to(vault)
+        if any(seg.startswith(".") or seg.startswith("_") for seg in rel.parts):
+            continue
+        if p.name in SCAFFOLD:
+            continue
+        try:
+            text = p.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        fm = extract_frontmatter(text)
+        rel_lower = rel.as_posix().lower()
+        s = score_page(keywords, mode, fm, rel_lower, fields)
+        if s > 0:
+            scored.append((s, rel.as_posix(), fm.get("tags", [])))
+
+    # Highest score first; stable path order within a score.
+    scored.sort(key=lambda t: (-t[0], t[1]))
+    if ns.limit and ns.limit > 0:
+        scored = scored[: ns.limit]
+
+    for _s, relpath, tags in scored:
+        if ns.paths:
+            print(relpath)
+        elif tags:
+            print(f"{relpath}  [{', '.join(tags)}]")
+        else:
+            print(relpath)
+
+    if not ns.paths:
+        sys.stdout.flush()
+        joined = (" " + mode + " ").join(keywords)
+        print(f"\n{len(scored)} match(es) for {joined} in {vault}", file=sys.stderr)
+    return 0 if scored else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
