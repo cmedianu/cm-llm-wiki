@@ -20,7 +20,8 @@ Results are ranked by match quality (exact title/alias/tag beats a partial tag
 beats a path/summary substring). Use --paths for a bare, pipe-friendly list.
 
 Vault discovery (in priority order):
-    1. --vault <path>
+    1. --vault <path-or-name> (a directory, or a unique registered vault name —
+       case-insensitive, special chars ignored, substring match)
     2. walk up from CWD to the first dir containing .manifest.json
     3. map CWD via ~/.obsidian-wiki/projects.json to config.<name>
     4. OBSIDIAN_VAULT_PATH env var
@@ -92,13 +93,63 @@ def default_vault() -> Optional[pathlib.Path]:
     return _vault_from_config(pathlib.Path.home() / ".obsidian-wiki" / "config")
 
 
+def registered_vaults() -> Dict[str, pathlib.Path]:
+    """Map registered vault name -> its config file (~/.obsidian-wiki/config.<name>)."""
+    reg = pathlib.Path.home() / ".obsidian-wiki"
+    out: Dict[str, pathlib.Path] = {}
+    if reg.is_dir():
+        for f in sorted(reg.iterdir()):
+            if f.name.startswith("config.") and f.is_file():
+                name = f.name[len("config."):]
+                if name:
+                    out[name] = f
+    return out
+
+
+def _norm(s: str) -> str:
+    """Lowercase and strip everything but [a-z0-9] — for fuzzy name matching."""
+    return re.sub(r"[^a-z0-9]", "", s.lower())
+
+
+def vault_from_name(selector: str) -> pathlib.Path:
+    """Resolve a fuzzy vault-name selector to a path. Case-insensitive, special
+    chars ignored, substring match; requires a unique hit. Exact (normalized)
+    name wins over substring matches. Raises SystemExit on none/ambiguous."""
+    vaults = registered_vaults()
+    if not vaults:
+        raise SystemExit(
+            f"-V {selector!r} is not a directory and no vaults are registered "
+            f"(no ~/.obsidian-wiki/config.<name> files)."
+        )
+    q = _norm(selector)
+    if not q:
+        raise SystemExit(f"-V {selector!r} has no matchable characters; give a path or vault name.")
+    exact = [n for n in vaults if _norm(n) == q]
+    cands = exact if len(exact) == 1 else [n for n in vaults if q in _norm(n)]
+    known = ", ".join(sorted(vaults))
+    if not cands:
+        raise SystemExit(f"No registered vault matches {selector!r}. Known vaults: {known}.")
+    if len(cands) > 1:
+        raise SystemExit(
+            f"Vault {selector!r} is ambiguous — matches: {', '.join(sorted(cands))}. Be more specific."
+        )
+    path = _vault_from_config(vaults[cands[0]])
+    if path is None:
+        raise SystemExit(f"config.{cands[0]} has no OBSIDIAN_VAULT_PATH set.")
+    path = path.expanduser()
+    if not path.is_dir():
+        raise SystemExit(f"Vault {cands[0]!r} points to a missing directory: {path}.")
+    return path
+
+
 def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
     """Resolve the active vault; fall back to the default vault (see module docstring)."""
     if explicit:
-        v = pathlib.Path(explicit).expanduser().resolve()
-        if not v.is_dir():
-            raise SystemExit(f"--vault path does not exist or is not a directory: {v}")
-        return v
+        v = pathlib.Path(explicit).expanduser()
+        if v.is_dir():
+            return v.resolve()
+        # Not a directory: treat it as a fuzzy registered-vault name.
+        return vault_from_name(explicit)
     cwd = pathlib.Path.cwd()
     home = pathlib.Path.home()
     for d in [cwd] + list(cwd.parents):
@@ -220,7 +271,9 @@ def main() -> int:
         prog="wiki.query",
         description="Search vault pages by frontmatter fields and path.",
     )
-    ap.add_argument("-V", "--vault", default=None, help="Vault root; overrides auto-detection.")
+    ap.add_argument("-V", "--vault", default=None, metavar="PATH|NAME",
+                    help="Vault root path, or a registered vault name (case-insensitive, "
+                         "special chars ignored, unique substring); overrides auto-detection.")
     ap.add_argument("-a", "--all", action="store_true",
                     help="Search title, aliases, tags, and summary (plus path).")
     ap.add_argument("-f", "--fields", default=None,
