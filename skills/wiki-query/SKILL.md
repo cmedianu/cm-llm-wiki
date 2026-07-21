@@ -52,17 +52,35 @@ Also decide the **mode**:
 
 ### Step 2: Index Pass (cheap)
 
-Build a candidate set *without opening any page bodies*:
+Build a candidate set *without opening any page bodies*. Prefer the `wiki.search`
+helper — it scans frontmatter (title, aliases, tags, summary) and path in one
+call, ranks by match quality, and skips `_`-dirs and scaffolding for you, so it
+returns a compact ranked path list instead of a wall of grep lines:
 
-- Use `Grep` to scan page **frontmatter only** for title, tag, alias, and summary matches — this is the authoritative candidate source. A pattern like `^(title|tags|aliases|summary):` scoped to vault `.md` files is far cheaper than content grep.
-- If `index.md` is hand-curated, the descriptions you skimmed above are a useful extra filter — but don't rely on it as a complete list; a base-backed index enumerates nothing when read as raw markdown, so the frontmatter grep is what actually finds the candidates.
-- Collect the top 5–10 candidate page paths ranked by:
-  1. Exact title or alias match
-  2. Tag match
-  3. Summary field contains the query term
-  4. `index.md` entry contains the query term
+```bash
+"$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki.search" --vault "$OBSIDIAN_VAULT_PATH" \
+  --all --paths --limit 10 <keyword> [and|or <keyword> ...]
+```
 
-If you're in **index-only mode**, stop here. Answer from `summary:` fields, titles, and `index.md` descriptions only. Label the answer clearly: **"(index-only answer — page bodies not read; facts below are from page summaries and may miss nuance)"**. Then skip to Step 5.
+- `--all` searches title/aliases/tags/summary + path; `--paths` prints bare
+  relative paths (highest-ranked first); `--limit 10` caps the shortlist.
+- Space-separated keywords are OR; insert `and` to require all of them.
+- This is the authoritative candidate source. Fall back to a frontmatter `Grep`
+  (`^(title|tags|aliases|summary):` over vault `.md`) only if you need a field
+  or match shape `wiki.search` can't express.
+- If `index.md` is hand-curated, the descriptions you skimmed above are a useful
+  extra filter — but don't rely on it as a complete list; a base-backed index
+  enumerates nothing when read as raw markdown, so `wiki.search` is what actually
+  finds the candidates.
+
+The tool already ranks (exact title/alias, then tag, then summary/path substring),
+so take its order as your candidate ranking, cross-checked against `index.md`.
+
+If you're in **index-only mode**, stop reading bodies here. Read *only the
+frontmatter* of the top few candidate paths (or add `--limit`-scoped follow-up)
+to answer from `summary:` fields, titles, and `index.md` descriptions. Label the
+answer clearly: **"(index-only answer — page bodies not read; facts below are
+from page summaries and may miss nuance)"**. Then skip to Step 5.
 
 ### Step 3: Section Pass (medium cost — only if Step 2 is inconclusive)
 
