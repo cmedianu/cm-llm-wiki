@@ -52,13 +52,13 @@ Also decide the **mode**:
 
 ### Step 2: Index Pass (cheap)
 
-Build a candidate set *without opening any page bodies*. Prefer the `wiki.search`
+Build a candidate set *without opening any page bodies*. Prefer the `wiki.query`
 helper — it scans frontmatter (title, aliases, tags, summary) and path in one
 call, ranks by match quality, and skips `_`-dirs and scaffolding for you, so it
 returns a compact ranked path list instead of a wall of grep lines:
 
 ```bash
-"$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki.search" --vault "$OBSIDIAN_VAULT_PATH" \
+"$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki.query" --vault "$OBSIDIAN_VAULT_PATH" \
   --all --paths --limit 10 <keyword> [and|or <keyword> ...]
 ```
 
@@ -67,10 +67,10 @@ returns a compact ranked path list instead of a wall of grep lines:
 - Space-separated keywords are OR; insert `and` to require all of them.
 - This is the authoritative candidate source. Fall back to a frontmatter `Grep`
   (`^(title|tags|aliases|summary):` over vault `.md`) only if you need a field
-  or match shape `wiki.search` can't express.
+  or match shape `wiki.query` can't express.
 - If `index.md` is hand-curated, the descriptions you skimmed above are a useful
   extra filter — but don't rely on it as a complete list; a base-backed index
-  enumerates nothing when read as raw markdown, so `wiki.search` is what actually
+  enumerates nothing when read as raw markdown, so `wiki.query` is what actually
   finds the candidates.
 
 The tool already ranks (exact title/alias, then tag, then summary/path substring),

@@ -6,10 +6,10 @@
 """Search the vault by frontmatter fields and file path.
 
 Usage:
-    wiki.search kw1                 # match pages whose tags or path contain kw1
-    wiki.search kw1 kw2             # implied OR — match either keyword
-    wiki.search kw1 or kw2          # same as above
-    wiki.search kw1 and kw2         # AND — every keyword must match
+    wiki.query kw1                 # match pages whose tags or path contain kw1
+    wiki.query kw1 kw2             # implied OR — match either keyword
+    wiki.query kw1 or kw2          # same as above
+    wiki.query kw1 and kw2         # AND — every keyword must match
 
 By default only frontmatter `tags` and the vault-relative `path` are searched.
 Widen the surface with --all (title, aliases, tags, summary + path) or a custom
@@ -217,7 +217,7 @@ def score_page(
 
 def main() -> int:
     ap = argparse.ArgumentParser(
-        prog="wiki.search",
+        prog="wiki.query",
         description="Search vault pages by frontmatter fields and path.",
     )
     ap.add_argument("-V", "--vault", default=None, help="Vault root; overrides auto-detection.")
