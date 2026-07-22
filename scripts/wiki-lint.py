@@ -25,15 +25,27 @@ Checks performed:
   9. Provenance marker ratios — ^[inferred] / ^[ambiguous] density by page.
   10. Misc promotion candidates — misc/ pages with strong affinity to a project.
   11. Index privacy leak — a private page (or its summary) listed in a more-public index.
+  12. Date-only date fields — created/updated/lifecycle_changed carrying a full
+      ISO datetime, or a string that isn't yyyy-MM-dd.
+
+A page can opt out of a specific warning-level check by listing its key in a
+`lint_ignore:` frontmatter list (e.g. `lint_ignore: [stale_snapshot]`).
+Error-level findings are never suppressible; a listed key that isn't a known
+check key is itself flagged (lint_ignore_unknown), so a typo can't silently
+suppress nothing.
 
 Usage:
   uv run .claude/wiki-scripts/wiki-lint.py [VAULT] [--format json|md]
+      [--errors-only] [--fix]
 
 Exit codes:
   0  no error-level findings
   1  at least one error-level finding exists
 
-Read-only — never writes to the vault. See README.md in this directory.
+Read-only by default — writes to the vault only under --fix, which applies two
+deterministic mechanical fixes (unambiguous wikilink path completion, dated-
+snapshot supersession wiring) before running the checks. See README.md in this
+directory.
 """
 
 import argparse
@@ -73,6 +85,10 @@ LOG_SIZE_BYTES = 50_000
 # `superseded_by` or `lifecycle: archived` is flagged as a stale snapshot.
 STALE_SNAPSHOT_DAYS = 90
 _FILENAME_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+# Frontmatter fields that must be date-only yyyy-MM-dd per the shared conventions
+DATE_ONLY_FIELDS = ("created", "updated", "lifecycle_changed")
+_DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 # Regex to extract wikilinks:  [[target]]  or  [[target|display]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
@@ -1050,6 +1066,324 @@ def check_index_privacy_leak(
     return out
 
 
+def check_date_format(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+) -> list[dict]:
+    """Check 12: date fields must be date-only yyyy-MM-dd.
+
+    yaml.safe_load already types unquoted values, so the value's Python type is
+    the test: a datetime.date is the convention; a datetime.datetime means the
+    file carries a full ISO datetime (the update-timestamp hook writes date-only,
+    so these come from manual edits or old templates); a quoted value stays a
+    string and must match yyyy-MM-dd exactly.
+    """
+    out = []
+    for page in content_pages:
+        fm = load_frontmatter(page)
+        if fm is None:
+            continue
+        rel = str(page.relative_to(vault))
+        for field in DATE_ONLY_FIELDS:
+            val = fm.get(field)
+            if val is None:
+                continue
+            if isinstance(val, datetime):  # test before date — datetime subclasses it
+                desc = f"a full ISO datetime ({val.isoformat()})"
+            elif isinstance(val, date):
+                continue
+            elif isinstance(val, str) and _DATE_ONLY_RE.match(val.strip()):
+                continue
+            else:
+                desc = f"{val!r}"
+            out.append(finding(
+                "warning", "date_format", rel,
+                f"`{field}:` is {desc} — date fields are date-only yyyy-MM-dd",
+            ))
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Per-page suppression (lint_ignore)
+# ---------------------------------------------------------------------------
+
+def _lint_ignore_keys(fm: Optional[dict]) -> set[str]:
+    """Check keys listed in a page's `lint_ignore:` frontmatter (list, or a bare
+    string treated as a one-element list). Empty set for anything else."""
+    if not fm:
+        return set()
+    raw = fm.get("lint_ignore")
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return set()
+    return {str(k).strip() for k in raw if str(k).strip()}
+
+
+def collect_lint_ignore(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+) -> tuple[dict[str, set[str]], list[dict]]:
+    """Per-page `lint_ignore:` suppression sets, plus findings for unknown keys.
+
+    Returns (finding-file-key → check keys to suppress, findings). Only
+    warning-level findings are suppressible — errors always report. A listed key
+    that is not a known check key (the _CATEGORY_SECTION keys) gets a
+    lint_ignore_unknown warning: a typo would otherwise silently suppress nothing.
+    """
+    known = set(_CATEGORY_SECTION)
+    ignore_map: dict[str, set[str]] = {}
+    out = []
+    for page in content_pages:
+        keys = _lint_ignore_keys(load_frontmatter(page))
+        if not keys:
+            continue
+        rel = page.relative_to(vault)
+        for k in sorted(keys - known):
+            out.append(finding(
+                "warning", "lint_ignore_unknown", str(rel),
+                f"lint_ignore lists unknown check key {k!r} — it suppresses "
+                "nothing (keys are the finding categories, e.g. 'stale_snapshot')",
+            ))
+        good = keys & known
+        if good:
+            # Key by both path spellings: finding files use str() or as_posix()
+            # depending on the check, and the two differ on native Windows.
+            for fkey in {str(rel), rel.as_posix()}:
+                ignore_map[fkey] = good
+    return ignore_map, out
+
+
+# ---------------------------------------------------------------------------
+# Fix pass (--fix) — deterministic mechanical fixes, applied before the checks
+# ---------------------------------------------------------------------------
+
+def _split_wikilink_inner(raw: str) -> tuple[str, str]:
+    """Split a wikilink's inner text into (path, suffix), where suffix is the
+    #heading / ^block / |alias tail, kept verbatim (including a table-escaped \\|)."""
+    for i, ch in enumerate(raw):
+        if ch in "#^":
+            return raw[:i], raw[i:]
+        if ch == "|":
+            if i > 0 and raw[i - 1] == "\\":
+                return raw[:i - 1], raw[i - 1:]
+            return raw[:i], raw[i:]
+    return raw, ""
+
+
+def build_fix_candidates(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+) -> dict[str, list[pathlib.Path]]:
+    """Lowercased basename → paths, for link completion: content pages by stem,
+    non-md attachments by full filename. Dot/underscore dirs excluded — a link
+    should never be rewritten to point into staging or infrastructure."""
+    by_key: dict[str, list[pathlib.Path]] = {}
+    for p in content_pages:
+        by_key.setdefault(p.stem.lower(), []).append(p)
+    for f in sorted(vault.rglob("*")):
+        if not f.is_file() or f.suffix == ".md":
+            continue
+        rel = f.relative_to(vault)
+        if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
+            continue
+        by_key.setdefault(f.name.lower(), []).append(f)
+    return by_key
+
+
+def fix_link_paths(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+    resolve,
+) -> int:
+    """Fix class (a): complete a bare-basename wikilink to its full vault-relative
+    path when the target is unambiguous.
+
+    Two cases, mirroring the checks that would otherwise report them:
+      - a broken link (resolver failed) whose basename matches exactly ONE
+        candidate — a content page by stem, or a non-md attachment by filename;
+      - a bare-basename link in the root index.md that resolves to a page not at
+        vault root (the index_bare_basename warning).
+    Zero or multiple candidates: leave the link alone and let the check report it.
+    Pathed links (containing '/') are never rewritten. Returns fixes applied.
+    """
+    candidates = build_fix_candidates(vault, content_pages)
+    fixed = 0
+    index_path = vault / "index.md"
+    pages = list(content_pages)
+    if index_path.is_file():
+        pages.append(index_path)
+
+    for page in pages:
+        rel = str(page.relative_to(vault))
+        is_index = page == index_path
+        try:
+            # newline='' keeps CRLF intact so the rewrite stays byte-surgical
+            with open(page, encoding="utf-8", newline="") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        lines = text.split("\n")
+
+        # Skip frontmatter (same extent logic as extract_wikilinks)
+        start = 0
+        if lines and lines[0].strip() == "---":
+            for i in range(1, len(lines)):
+                if lines[i].strip() == "---":
+                    start = i + 1
+                    break
+
+        applied: list[tuple[str, str]] = []
+
+        def _sub(m: re.Match) -> str:
+            raw = m.group(1)
+            path_part, suffix = _split_wikilink_inner(raw)
+            target = path_part.strip()
+            if not target or "/" in target:
+                return m.group(0)
+            new = None
+            resolved = resolve(target)
+            if resolved is None:
+                matches = candidates.get(target.lower(), [])
+                if len(matches) == 1:
+                    trel = matches[0].relative_to(vault)
+                    # .md pages link without extension; attachments keep theirs
+                    new = (trel.with_suffix("").as_posix()
+                           if matches[0].suffix == ".md" else trel.as_posix())
+            elif is_index:
+                trel = resolved.relative_to(vault)
+                if len(trel.parts) > 1:
+                    new = trel.with_suffix("").as_posix()
+            if new is None or new == target:
+                return m.group(0)
+            applied.append((raw, new + suffix))
+            return f"[[{new}{suffix}]]"
+
+        in_fence = False
+        for i in range(start, len(lines)):
+            if _FENCE_RE.match(lines[i].strip()):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            lines[i] = _WIKILINK_RE.sub(_sub, lines[i])
+
+        if applied:
+            with open(page, "w", encoding="utf-8", newline="") as fh:
+                fh.write("\n".join(lines))
+            _LINK_CACHE.pop(page, None)
+            for old, new in applied:
+                print(f"fixed    {rel} — [[{old}]] → [[{new}]]")
+            fixed += len(applied)
+    return fixed
+
+
+def _wire_supersession(page: pathlib.Path, target_rel: str, today: str) -> bool:
+    """Textually set superseded_by / lifecycle / lifecycle_changed in the page's
+    frontmatter: replace existing top-level scalar lines in place, insert missing
+    ones before the closing ---. Never re-dumps YAML, preserves formatting and
+    line endings. Returns False (nothing written) when the block is missing or an
+    existing key holds a non-scalar value we can't safely swap."""
+    try:
+        with open(page, encoding="utf-8", newline="") as fh:
+            text = fh.read()
+    except OSError:
+        return False
+    lines = text.split("\n")
+    if not lines or lines[0].strip() != "---":
+        return False
+    end = None
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            end = i
+            break
+    if end is None:
+        return False
+
+    updates = [
+        ("superseded_by", target_rel),
+        ("lifecycle", "archived"),
+        ("lifecycle_changed", today),
+    ]
+    # Locate existing lines first and bail before touching anything: a bare
+    # `key:` followed by an indented continuation is a block value, not a line
+    # we can swap.
+    positions: dict[str, int] = {}
+    for key, _ in updates:
+        for i in range(1, end):
+            m = re.match(rf"{key}:(.*)$", lines[i])
+            if m:
+                if not m.group(1).strip() and i + 1 < end and lines[i + 1][:1] in (" ", "\t"):
+                    return False
+                positions[key] = i
+                break
+    for key, value in updates:
+        if key in positions:
+            i = positions[key]
+            eol = "\r" if lines[i].endswith("\r") else ""
+            lines[i] = f"{key}: {value}{eol}"
+        else:
+            eol = "\r" if lines[end - 1].endswith("\r") else ""
+            lines.insert(end, f"{key}: {value}{eol}")
+            end += 1
+    with open(page, "w", encoding="utf-8", newline="") as fh:
+        fh.write("\n".join(lines))
+    _FM_CACHE.pop(page, None)
+    _LINK_CACHE.pop(page, None)
+    return True
+
+
+def fix_snapshot_supersession(
+    vault: pathlib.Path,
+    content_pages: list[pathlib.Path],
+) -> int:
+    """Fix class (b): wire supersession on stale dated snapshots.
+
+    Same family grouping as check_sizes_and_snapshots: dated pages sharing a
+    date-stripped stem. Every non-newest member that is neither archived nor
+    wired gets `superseded_by` → the newest sibling, `lifecycle: archived`, and
+    `lifecycle_changed: today`. Skipped when the page suppresses stale_snapshot
+    via lint_ignore, when two siblings tie for newest (ambiguous target), or when
+    the newest sibling is itself archived (wiring to it would trade the warning
+    for a superseded_by_archived error). Returns fixes applied.
+    """
+    today = date.today().isoformat()
+    snapshot_groups: dict[tuple, list[tuple[str, pathlib.Path]]] = {}
+    for page in content_pages:
+        m = _FILENAME_DATE_RE.search(page.stem)
+        if m:
+            stem_key = (page.parent, _FILENAME_DATE_RE.sub("<date>", page.stem))
+            snapshot_groups.setdefault(stem_key, []).append((m.group(1), page))
+
+    fixed = 0
+    for members in snapshot_groups.values():
+        if len(members) < 2:
+            continue
+        newest = max(d for d, _ in members)
+        newest_pages = [p for d, p in members if d == newest]
+        if len(newest_pages) != 1:
+            continue
+        target_page = newest_pages[0]
+        if (load_frontmatter(target_page) or {}).get("lifecycle") == "archived":
+            continue
+        target_rel = target_page.relative_to(vault).with_suffix("").as_posix()
+        for d, page in members:
+            if d == newest:
+                continue
+            fm = load_frontmatter(page)
+            if fm is None:
+                continue  # missing/unparseable frontmatter — no safe place to edit
+            if fm.get("lifecycle") == "archived" or fm.get("superseded_by"):
+                continue  # already wired — the check wouldn't flag it
+            if "stale_snapshot" in _lint_ignore_keys(fm):
+                continue  # page opted out of the check — respect that for the fix
+            if _wire_supersession(page, target_rel, today):
+                rel = str(page.relative_to(vault))
+                print(f"fixed    {rel} — superseded_by: {target_rel}; lifecycle: archived")
+                fixed += 1
+    return fixed
+
+
 # ---------------------------------------------------------------------------
 # Output formatters
 # ---------------------------------------------------------------------------
@@ -1078,11 +1412,13 @@ _CATEGORY_SECTION = {
     "provenance_ratio": "Provenance Ratio Flags",
     "misc_promotion_candidate": "Misc Promotion Candidates",
     "index_privacy_leak": "Index Privacy Leak (private page in a more-public index)",
+    "date_format": "Date Fields Not Date-Only",
+    "lint_ignore_unknown": "Unknown lint_ignore Keys",
 }
 
 
 def format_md(vault: pathlib.Path, findings: list[dict], provenance: list[dict],
-              pages_checked: int) -> str:
+              pages_checked: int, errors_only: bool = False) -> str:
     lines = ["## Wiki Health Report", ""]
     lines.append(f"Vault: `{vault}`  |  Pages checked: {pages_checked}")
     lines.append("")
@@ -1109,7 +1445,11 @@ def format_md(vault: pathlib.Path, findings: list[dict], provenance: list[dict],
 
     errors = sum(1 for f in findings if f["severity"] == "error")
     warnings = sum(1 for f in findings if f["severity"] == "warning")
-    lines.append(f"{errors} errors, {warnings} warnings across {pages_checked} pages checked.")
+    if errors_only:
+        # warnings were filtered out before formatting — don't claim a count of 0
+        lines.append(f"{errors} errors across {pages_checked} pages checked (warnings suppressed).")
+    else:
+        lines.append(f"{errors} errors, {warnings} warnings across {pages_checked} pages checked.")
     return "\n".join(lines)
 
 
@@ -1173,7 +1513,22 @@ def main() -> int:
         help="One or more vault-relative paths or globs. Scopes REPORTED findings to "
              "just these pages; graph-wide checks still compute against the full vault.",
     )
+    parser.add_argument(
+        "--errors-only", action="store_true",
+        help="Report only error-level findings (terse, for a git pre-commit gate). "
+             "Warnings are neither shown nor counted; exit code semantics unchanged.",
+    )
+    parser.add_argument(
+        "--fix", action="store_true",
+        help="Apply safe mechanical fixes before checking: complete unambiguous "
+             "broken/bare-basename wikilinks to full vault-relative paths, and wire "
+             "superseded_by + lifecycle on stale dated snapshots. One line per fix; "
+             "the report then reflects the post-fix state.",
+    )
     args = parser.parse_args()
+
+    if args.fix and args.errors_only:
+        parser.error("--fix cannot be combined with --errors-only")
 
     vault = resolve_vault(args.vault_flag or args.vault)
 
@@ -1192,6 +1547,13 @@ def main() -> int:
 
     resolve = build_resolver(vault, content_pages)
     private_paths = load_private_paths(vault)
+
+    # --fix: apply the two mechanical fix classes first, so the report below
+    # reflects the post-fix state (a completed link stops being a broken_link,
+    # a wired snapshot stops being a stale_snapshot).
+    if args.fix:
+        fix_link_paths(vault, content_pages, resolve)
+        fix_snapshot_supersession(vault, content_pages)
 
     all_findings: list[dict] = []
 
@@ -1227,6 +1589,20 @@ def main() -> int:
     # Check 11: index privacy leak
     all_findings.extend(check_index_privacy_leak(vault, content_pages, resolve, private_paths))
 
+    # Check 12: date-only date fields
+    all_findings.extend(check_date_format(vault, content_pages))
+
+    # Per-page suppression: a warning whose check key is listed in its page's
+    # `lint_ignore:` frontmatter is dropped before reporting, so it counts toward
+    # neither the summary nor the exit code. Errors are never suppressible.
+    ignore_map, ignore_findings = collect_lint_ignore(vault, content_pages)
+    all_findings.extend(ignore_findings)
+    all_findings = [
+        f for f in all_findings
+        if not (f["severity"] == "warning"
+                and f["category"] in ignore_map.get(f["file"], ()))
+    ]
+
     pages_checked = len(content_pages)
 
     # --pages: everything above computed against the whole vault (so graph-wide
@@ -1238,8 +1614,15 @@ def main() -> int:
         provenance_records = [p for p in provenance_records if p["file"] in page_filter]
         pages_checked = len(page_filter)
 
+    # --errors-only: warnings (and the warning-flavoured provenance records) are
+    # dropped entirely — not shown, not counted. Exit code is unchanged either way.
+    if args.errors_only:
+        all_findings = [f for f in all_findings if f["severity"] == "error"]
+        provenance_records = []
+
     if args.format == "md":
-        print(format_md(vault, all_findings, provenance_records, pages_checked))
+        print(format_md(vault, all_findings, provenance_records, pages_checked,
+                        errors_only=args.errors_only))
     else:
         print(format_json(vault, all_findings, provenance_records, pages_checked))
 

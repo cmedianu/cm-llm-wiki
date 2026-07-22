@@ -33,10 +33,13 @@ One pass performs every mechanical check, reproducibly:
 - **Hardcoded inventory counts** — brittle "N pages/skills/sources/…" tallies (per the shared "no hardcoded counts" convention)
 - **Stale content** — a source modified after the page's `updated`, or a page older than 90 days
 - **Lifecycle + supersession** — invalid `lifecycle` enum values; `superseded_by` targets that are missing, archived, or cyclic
+- **Date fields** — `created` / `updated` / `lifecycle_changed` that aren't date-only `yyyy-MM-dd` (full ISO datetimes, odd strings)
 - **Provenance marker ratios** — `^[inferred]` / `^[ambiguous]` density per page, with flags (speculation-heavy, unsourced-synthesis, hub-with-high-inferred)
 - **Misc promotion candidates** — `misc/` pages whose links lean heavily into one project (computed on demand — no score is stored on pages)
 
 Read its report. **Exit code 1** means at least one error-level finding (broken links, missing frontmatter, bad lifecycle/supersession). Use `--format json` if you want to post-process the findings. (Requires `uv`; the PEP 723 header supplies `pyyaml` automatically. Never fall back to a bare `python3`.)
+
+Two flags beyond the report: `--errors-only` prints just the error-level findings (terse — made for a git pre-commit hook), and `--fix` applies the two safe mechanical fixes before checking — completing a broken or index bare-basename wikilink to its full vault-relative path when the basename matches exactly one file, and wiring `superseded_by` + `lifecycle: archived` onto a dated snapshot that has a newer sibling — then reports the post-fix state. Anything ambiguous is left for the report. A page can opt out of a specific **warning** with a `lint_ignore:` frontmatter list (e.g. `lint_ignore: [stale_snapshot]`); errors are never suppressible, and an unknown key is itself flagged.
 
 For graph-shaped questions the linter doesn't cover — **tag-cluster cohesion**, hubs, bridges — run `uv run .claude/wiki-scripts/wiki-graph.py` (see `wiki-status` insights mode). For **synthesis gaps**, run `wiki-link`'s synthesis mode (`/wiki-synthesize`).
 
@@ -74,13 +77,14 @@ Propose fixes for the script's findings and your semantic findings. Apply the sa
 
 | Finding | Fix |
 |---|---|
-| Broken wikilink | Update the link, create the target, or remove it |
+| Broken wikilink | Update the link, create the target, or remove it (`--fix` completes it when the basename matches exactly one file) |
 | **Many** links broke at once (folder/convention rename) | Don't fix one-by-one — use `../wiki-scripts/kebab-rename.py` (rename + wikilink rewrite + manifest re-key in lockstep; `DRY_RUN=1` to preview) |
 | Orphaned page | Add incoming links from the right pages, or run `wiki-link` |
 | Missing frontmatter / summary | Add the fields with reasonable defaults |
 | Index drift | Sync `index.md` to match disk; fix headings to mirror folders |
 | Hardcoded count | Rewrite to describe the collection, or compute at read time |
 | Stale | Re-ingest the source; staleness clears when `updated` bumps |
+| Stale dated snapshot (newer sibling) | `--fix` wires it: `superseded_by` + `lifecycle: archived` — or `lint_ignore: [stale_snapshot]` if both snapshots should stay live |
 | Invalid lifecycle / broken supersession | Flag for the human — never auto-set `lifecycle` |
 | Misc promotion candidate | Move to `projects/<name>/references/`, update `category`, and grep for backlinks to update |
 | Fragmented tag cluster (from `wiki-graph.py`) | Run `wiki-link` targeted at that tag |

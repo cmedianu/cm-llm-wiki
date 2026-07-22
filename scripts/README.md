@@ -21,7 +21,7 @@ the LLM doesn't recompute mechanical things by reading every page:
 
 | Script | Backs | Computes |
 |---|---|---|
-| `wiki-lint.py` | `wiki-lint` | orphans, broken links, missing/oversized frontmatter & summary, index drift, hardcoded counts, stale pages, lifecycle/supersession integrity, provenance marker ratios, misc-promotion candidates, index privacy leaks |
+| `wiki-lint.py` | `wiki-lint` | orphans, broken links, missing/oversized frontmatter & summary, index drift, hardcoded counts, stale pages, lifecycle/supersession integrity, provenance marker ratios, misc-promotion candidates, index privacy leaks, non-date-only date fields |
 | `wiki-graph.py` | `wiki-status` (insights) | wikilink graph: hubs, tag cohesion, orphans/orphan-adjacent, bridges (articulation points), cross-category edges, run-to-run delta |
 | `wiki-journal.py` | `wiki-ingest` / `wiki-capture` / any log+hot writer | mechanical `log.md` append + `hot.md` Recent-Activity prepend/trim + `updated:` bump. The LLM supplies only the distilled one-line entry; the script owns timestamps, placement, trimming, and template creation. |
 
@@ -130,6 +130,8 @@ Read-only; never writes. Needs `pyyaml` via the PEP 723 header.
 ```sh
 uv run .claude/wiki-scripts/wiki-lint.py              # JSON report (default)
 uv run .claude/wiki-scripts/wiki-lint.py --format md  # human-readable report
+uv run .claude/wiki-scripts/wiki-lint.py --errors-only  # errors only (pre-commit gate)
+uv run .claude/wiki-scripts/wiki-lint.py --fix        # safe mechanical fixes, then the report
 uv run .claude/wiki-scripts/wiki-lint.py --vault "$OBSIDIAN_VAULT_PATH" \
   --pages "sysadmin/page-a.md" "sysadmin/home-network/*.md"  # scope the report
 ```
@@ -138,13 +140,29 @@ uv run .claude/wiki-scripts/wiki-lint.py --vault "$OBSIDIAN_VAULT_PATH" \
 uv run .claude\wiki-scripts\wiki-lint.py --format md
 ```
 
-Runs every mechanical health check in one read-only pass and prints a report:
+Runs every mechanical health check in one pass and prints a report:
 orphans, broken wikilinks, missing/oversized frontmatter and summaries, index
 drift, hardcoded inventory counts, stale pages, lifecycle/supersession integrity,
-provenance marker ratios, misc-promotion candidates, and **index privacy leaks**.
+provenance marker ratios, misc-promotion candidates, **index privacy leaks**, and
+date fields that aren't date-only `yyyy-MM-dd`.
 Exit `0` when there are no error-level findings, `1` when there are (broken links,
 missing required frontmatter, invalid lifecycle/supersession, privacy leaks) — so
-it works as a pre-commit / pre-publish gate.
+it works as a pre-commit / pre-publish gate; `--errors-only` keeps that gate's
+output terse (warnings neither shown nor counted, exit code unchanged).
+
+**`--fix`** applies the two safe mechanical fixes *before* checking, one printed
+line per fix, so the report reflects the post-fix state: a broken (or index
+bare-basename) wikilink whose basename matches exactly one file — content page by
+stem, attachment by filename — is completed to its full vault-relative path
+(alias and `#heading` kept); a dated snapshot with a newer sibling gets
+`superseded_by`, `lifecycle: archived`, and `lifecycle_changed` wired via surgical
+frontmatter line edits. Zero or multiple candidates, or anything else ambiguous,
+is left alone for the report. Refuses to combine with `--errors-only`.
+
+A page can suppress a specific **warning**-level check with a `lint_ignore:`
+frontmatter list (e.g. `lint_ignore: [stale_snapshot]`). Errors are never
+suppressible, and a listed key that isn't a known check key is flagged
+(`lint_ignore_unknown`) so a typo can't silently suppress nothing.
 
 **Index privacy leak** (`index_privacy_leak`): if the vault declares `private_paths`
 in `.manifest.json` (e.g. `["me", "context/me"]`), a private content page must only be
@@ -155,7 +173,7 @@ check is privacy-aware too: a page counts as indexed if *any* index (root or sec
 lists it. No `private_paths` → both behave exactly as before. The key survives
 `regen-manifest.py`. The `wiki-lint` skill calls this, then adds the judgement-only
 checks it can't: contradictions, provenance interpretation, and visibility/PII.
-Read-only; never writes. Needs `pyyaml` via the PEP 723 header — nothing to install.
+Read-only unless `--fix` is given. Needs `pyyaml` via the PEP 723 header — nothing to install.
 
 **`--pages <path|glob> …`** scopes the *report* to the given vault-relative pages
 (literal paths or globs). Per-page checks (frontmatter, summary, broken outgoing
