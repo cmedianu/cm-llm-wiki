@@ -25,8 +25,11 @@ Notes
 -----
 * `--vault` defaults to the auto-detected vault (walk up from CWD for .manifest.json,
   then ~/.obsidian-wiki/projects.json); log.md / hot.md must sit at its root.
-* The log timestamp is real wall-clock UTC (ISO-8601 `...Z`), or date-only with
-  `--date-only`. hot.md's `updated:` is always set to today's date (UTC).
+* The log timestamp is real wall-clock local time (ISO-8601 with numeric
+  offset, e.g. `2026-07-21T23:48:30-07:00`), or date-only with `--date-only`.
+  Older log lines may end in `Z` (pre-local-time UTC stamps); trimming accepts
+  both. hot.md's `updated:` is always set to today's date (local), matching
+  the update-timestamp hook.
 * hot.md is created from a minimal template if missing. log.md is created empty.
 * `--hot-entry` text is the bullet body WITHOUT the leading "- "; a leading
   "- " is stripped if present. Multi-line entries: embed "\n" and the script
@@ -118,23 +121,23 @@ updated: {date}
 """
 
 
-def _now_utc() -> _dt.datetime:
-    return _dt.datetime.now(_dt.timezone.utc)
+def _now_local() -> _dt.datetime:
+    return _dt.datetime.now().astimezone()
 
 
 def _today(date_override: str | None) -> str:
     if date_override:
         return date_override
-    return _now_utc().strftime("%Y-%m-%d")
+    return _now_local().strftime("%Y-%m-%d")
 
 
 def _log_timestamp(ts_override: str | None, date_only: bool) -> str:
     if ts_override:
         return ts_override
-    now = _now_utc()
+    now = _now_local()
     if date_only:
         return now.strftime("%Y-%m-%d")
-    return now.strftime("%Y-%m-%dT%H:%M:%SZ")
+    return now.isoformat(timespec="seconds")
 
 
 def append_log(vault: Path, body: str, timestamp: str) -> str:
