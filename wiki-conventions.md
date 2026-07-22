@@ -90,3 +90,10 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   their summaries. Rule of thumb: *a summary travels only as far up as its own privacy scope.*
   `wiki-lint.py` enforces this (`index_privacy_leak`); the key is preserved across
   `regen-manifest.py` runs. Vaults with no `private_paths` are unaffected (the check is a no-op).
+- **Lint suppression is per-page and explicit.** A page that legitimately trips a
+  warning-level `wiki-lint.py` check (e.g. a meeting-notes series flagged as a stale
+  snapshot — meetings are events, not superseding snapshots) declares `lint_ignore:` in its
+  frontmatter listing the check keys to silence. Warnings only — error-level findings are
+  never suppressible — and unknown keys are themselves flagged (`lint_ignore_unknown`), so a
+  typo can't silently disable anything. Prefer fixing the finding; suppress only when the
+  check's assumption genuinely doesn't fit the page.
