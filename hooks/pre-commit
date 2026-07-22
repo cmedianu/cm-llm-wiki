@@ -1,0 +1,36 @@
+#!/usr/bin/env bash
+#
+# Git pre-commit gate for cm-llm-wiki vaults - blocks a commit that would land
+# invalid frontmatter or error-level lint findings (broken wikilinks, bad
+# lifecycle values, broken supersession). Warnings never block a commit; run
+# the full `wiki-lint.py` (or /wiki-lint) for those.
+#
+# Wired into a vault's gitdir by wire-vault.sh (works with a plain .git dir or
+# a `gitdir:` pointer file, e.g. a gitdir parked outside OneDrive). The vault
+# reaches the scripts through its .claude/wiki-scripts symlink, so this hook
+# has no hardcoded repo path. Bypass in an emergency with `git commit --no-verify`.
+set -euo pipefail
+
+toplevel="$(git rev-parse --show-toplevel)"
+scripts="$toplevel/.claude/wiki-scripts"
+
+if ! command -v uv >/dev/null 2>&1; then
+  echo "pre-commit: uv not on PATH; skipping wiki checks (install uv or commit with --no-verify)" >&2
+  exit 0
+fi
+if [[ ! -d "$scripts" ]]; then
+  echo "pre-commit: $scripts missing; re-run wire-vault.sh (skipping wiki checks)" >&2
+  exit 0
+fi
+
+cd "$toplevel"
+
+uv run --script "$scripts/validate-frontmatter.py" || {
+  echo "pre-commit: frontmatter validation failed - fix the pages above (or --no-verify)" >&2
+  exit 1
+}
+
+uv run --script "$scripts/wiki-lint.py" --errors-only --format md || {
+  echo "pre-commit: wiki-lint found error-level issues - fix them (or --no-verify)" >&2
+  exit 1
+}

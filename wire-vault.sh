@@ -101,6 +101,18 @@ wire_vault() {
   # so the whole dir can be a symlink into the repo.
   link "$vault/.github/hooks"               "$REPO/hooks/copilot"       ".github/hooks"
 
+  # Git pre-commit gate (frontmatter validation + errors-only lint) - only when
+  # the vault is a git repo. The gitdir may sit outside the vault via a `gitdir:`
+  # pointer file (e.g. parked under ~/gitdirs to keep it out of OneDrive sync),
+  # so resolve it through git rather than assuming $vault/.git is a directory.
+  local gitdir
+  if gitdir="$(git -C "$vault" rev-parse --absolute-git-dir 2>/dev/null)"; then
+    [[ $CHECK -eq 1 ]] || mkdir -p "$gitdir/hooks"
+    link "$gitdir/hooks/pre-commit" "$REPO/hooks/pre-commit" "gitdir/hooks/pre-commit"
+  else
+    echo "ok       pre-commit (vault is not a git repo; nothing to wire)"
+  fi
+
   # Stray wiki-* skills under .claude/skills are the OLD per-vault model; skills are user-level now.
   # (A .claude/skills holding only non-wiki skills, e.g. docx/pdf, is fine and left alone.)
   if [[ -d "$vault/.claude/skills" ]]; then
