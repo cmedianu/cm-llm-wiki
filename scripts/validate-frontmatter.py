@@ -10,6 +10,11 @@ commonly an unquoted colon-space (`: `) in a value, which YAML reads as a
 key/value separator. One bad line invalidates the whole block, and Obsidian
 then silently fails to render the Properties panel for that page.
 
+Also rejects duplicate mapping keys (at any nesting level), which
+`yaml.safe_load` silently collapses last-wins — a page with two `lifecycle:`
+keys would otherwise validate while Obsidian and the linter disagree on which
+value is in effect.
+
   uv run .claude/wiki-scripts/validate-frontmatter.py     # from anywhere in the vault
   # or, if marked executable:  ./.claude/wiki-scripts/validate-frontmatter.py
 
@@ -28,12 +33,32 @@ import os
 import re
 import sys
 import pathlib
+from collections.abc import Hashable
 from typing import Optional
 
 import yaml
 
 # Basenames that are scaffolding / meta, not pages — frontmatter not required.
 ALLOW_NO_FRONTMATTER = {"index.md", "log.md", "hot.md", "CLAUDE.md", "AGENTS.md", "README.md"}
+
+
+class _UniqueKeyLoader(yaml.SafeLoader):
+    """SafeLoader that raises on duplicate mapping keys instead of keeping the last."""
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            if not isinstance(key, Hashable):
+                continue  # let SafeLoader raise its own unhashable-key error
+            if key in seen:
+                raise yaml.constructor.ConstructorError(
+                    None, None,
+                    f"duplicate frontmatter key: {key!r}",
+                    key_node.start_mark,
+                )
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 
 def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
@@ -112,7 +137,7 @@ def check(path: pathlib.Path):
         return ("UNCLOSED", "no closing '---' delimiter")
     block = "\n".join(lines[1:end])
     try:
-        data = yaml.safe_load(block)
+        data = yaml.load(block, Loader=_UniqueKeyLoader)
     except yaml.YAMLError as e:
         return ("INVALID", str(e).replace("\n", " ").strip())
     if not isinstance(data, dict):
