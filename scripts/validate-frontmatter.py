@@ -28,6 +28,7 @@ CLAUDE.md, any README.md) are allow-listed and never reported as missing.
 Read-only — never writes. See README.md in this directory.
 """
 import argparse
+import datetime
 import json
 import os
 import re
@@ -160,6 +161,8 @@ def main() -> int:
         rel = f.relative_to(vault)
         if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
             continue  # skip dotdirs (.claude, ...) and _-dirs (_raw, _bin, _strata-emails) — not wiki content
+        if len(rel.parts) == 1 and rel.name == f"{datetime.date.today().isoformat()}.md":
+            continue  # today's daily note is work-in-progress scratch — checked from tomorrow on
         checked += 1
         status, detail = check(f)
         if status == "OK":

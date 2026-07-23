@@ -97,6 +97,11 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   of everything uncommitted, nor a micro-commit per file or per tiny logical step — a few
   coherent groups per work session. Unrelated leftovers another session parked in the
   working tree get their own commit (or get surfaced), not swept into yours.
+  **Never commit the current day's daily note** — a root-level `yyyy-MM-dd.md` matching
+  today's date is work-in-progress scratch, and the wiki tools (`validate-frontmatter.py`,
+  `wiki-lint.py`) skip it entirely so an empty one can't block the pre-commit gate. From
+  the next day it counts as a normal page again: give it frontmatter (or distil it into
+  real pages and delete it) before it rides along in a commit.
 - **Lint suppression is per-page and explicit.** A page that legitimately trips a
   warning-level `wiki-lint.py` check (e.g. a meeting-notes series flagged as a stale
   snapshot — meetings are events, not superseding snapshots) declares `lint_ignore:` in its

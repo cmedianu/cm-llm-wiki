@@ -173,6 +173,8 @@ def is_content_page(rel: pathlib.PurePosixPath) -> bool:
         return False
     if rel.name in SCAFFOLDING:
         return False
+    if len(parts) == 1 and rel.name == f"{date.today().isoformat()}.md":
+        return False  # today's daily note is work-in-progress scratch — a page from tomorrow on
     return True
 
 
