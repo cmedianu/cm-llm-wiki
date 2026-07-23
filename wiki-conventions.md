@@ -90,6 +90,13 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   their summaries. Rule of thumb: *a summary travels only as far up as its own privacy scope.*
   `wiki-lint.py` enforces this (`index_privacy_leak`); the key is preserved across
   `regen-manifest.py` runs. Vaults with no `private_paths` are unaffected (the check is a no-op).
+- **Vault commits are grouped and conventional.** When a vault is git-managed, use
+  Conventional Commits (`type(scope): subject`) and group each commit around changes that
+  belong together — an ingest batch plus its manifest/log resync is one commit; an unrelated
+  mechanical sweep is another. Be reasonable about granularity: neither a catch-all snapshot
+  of everything uncommitted, nor a micro-commit per file or per tiny logical step — a few
+  coherent groups per work session. Unrelated leftovers another session parked in the
+  working tree get their own commit (or get surfaced), not swept into yours.
 - **Lint suppression is per-page and explicit.** A page that legitimately trips a
   warning-level `wiki-lint.py` check (e.g. a meeting-notes series flagged as a stale
   snapshot — meetings are events, not superseding snapshots) declares `lint_ignore:` in its
