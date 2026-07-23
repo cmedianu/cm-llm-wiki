@@ -32,8 +32,6 @@ If the user's query includes phrases like **"public only"**, **"user-facing"**, 
 
 Pages with no `visibility/` tag, or tagged `visibility/public`, are always included.
 
-In filtered mode, note the filter in the Step 6 log entry: `mode=filtered`.
-
 ## Retrieval Protocol
 
 **Follow the Retrieval Primitives table in `wiki/SKILL.md`.** Reading is the dominant cost of this skill — use the cheapest primitive that answers the question and escalate only when it can't. Never jump straight to full-page reads.
@@ -127,13 +125,7 @@ Examples in a synthesized answer:
 
 Pages with no lifecycle field (legacy pages predating the schema) are treated the same as `draft` — annotate if stale, skip otherwise. Never fabricate a `lifecycle_reason`; if the field is absent, omit the reason from the annotation.
 
-### Step 6: Log the Query
-
-Log the query via `wiki-journal.py` — `--log` only (a query isn't a hot-cache-worthy write). Log a coarse **topic slug** (a short kebab-case topic derived from the question), never the verbatim question — the log is shareable scope:
-```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-  --log 'QUERY topic=<short-kebab-topic> result_pages=N mode=normal|index_only|filtered escalated=true|false'
-```
+Queries are read-only — do **not** log them to `log.md` (the journal records writes: ingests, edits, captures).
 
 ## Answer Format
 
