@@ -97,6 +97,13 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   of everything uncommitted, nor a micro-commit per file or per tiny logical step — a few
   coherent groups per work session. Unrelated leftovers another session parked in the
   working tree get their own commit (or get surfaced), not swept into yours.
+  **Batching commits: gate only the last one.** The pre-commit hook re-runs the
+  whole-vault checks (frontmatter + error-level lint) on every commit - ~30s per
+  commit on an OneDrive-mounted vault. Those checks inspect the vault's *current
+  on-disk state*, not the commit's delta, so when landing several commits
+  back-to-back pass `--no-verify` on every commit **except the final one**; the
+  last gated commit validates the identical end state the intermediate gates
+  would have seen. Never skip the gate on a batch's final commit.
   **Never commit the current day's daily note** — a root-level `yyyy-MM-dd.md` matching
   today's date is work-in-progress scratch, and the wiki tools (`validate-frontmatter.py`,
   `wiki-lint.py`) skip it entirely so an empty one can't block the pre-commit gate. From
