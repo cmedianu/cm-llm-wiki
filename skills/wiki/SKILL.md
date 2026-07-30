@@ -256,7 +256,7 @@ Companion skills (`../`), the consolidated ~10-skill lineup:
 - **wiki-ingest**: Distill source documents into wiki pages; **Claude-history mode** mines `~/.claude` session data
 - **wiki-query**: Answer questions against the wiki
 - **wiki-lint**: Audit and maintain wiki health
-- **wiki-compact**: Merge duplicates, archive stale pages, roll the log (the shrink side); **Rebuild Mode** archives/rebuilds/restores the whole wiki
+- **wiki-compact**: Merge duplicates, archive stale pages, retire dead sub-areas to `_archives/`, roll the log (the shrink side); **Rebuild Mode** archives/rebuilds/restores the whole wiki
 - **wiki-capture**: Save the current conversation as a wiki page; **project-sync mode** pushes knowledge from any working project into the wiki
 - **wiki-research**: Multi-round web research, auto-file results
 - **wiki-link**: Discover and insert missing wikilinks; **synthesis mode** creates cross-page synthesis pages

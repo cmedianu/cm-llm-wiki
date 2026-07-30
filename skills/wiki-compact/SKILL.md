@@ -1,9 +1,10 @@
 ---
 name: wiki-compact
 description: >
-  Shrink and consolidate the Obsidian wiki: merge duplicate pages, archive stale content, distil raw
-  dumps, rotate the log. The fixer for wiki-lint findings, and handles full archive-and-rebuild or
-  restore. Counterpart to wiki-ingest — removes and consolidates, never adds.
+  Shrink and consolidate the Obsidian wiki: merge duplicate pages, archive stale content, retire dead
+  pages or whole sub-areas out of the wiki to _archives/, distil raw dumps, rotate the log. The fixer
+  for wiki-lint findings, and handles full archive-and-rebuild or restore. Counterpart to wiki-ingest —
+  removes and consolidates, never adds.
 ---
 
 # Wiki Compact — Prune, Merge, Archive
@@ -42,7 +43,8 @@ Then the two judgments a script can't make:
 Produce a table: candidate → action → what happens to the content. Actions:
 
 - **merge A into B** — fold A's unique facts into B, then archive A with `superseded_by: <B's path>`.
-- **archive** — set `lifecycle: archived` (+ `lifecycle_changed`), leave the page in place. Archived pages stay resolvable (links keep working) but drop out of active-page queries.
+- **archive** — set `lifecycle: archived` (+ `lifecycle_changed`), leave the page in place. Archived pages stay resolvable (links keep working) but drop out of active-page queries. For **superseded-but-still-knowledge** content.
+- **retire to `_archives/`** — move the page, or a whole dead sub-area, *out of the wiki* into `_archives/<topic>/`. Underscore dirs are invisible to every wiki script — no query hits, no index rows, no graph, lint, or manifest presence — but stay greppable and in git history. For **dead weight with no ongoing value** (a declined program, an abandoned plan, a finished one-off); if a future reader might still follow links into it, prefer **archive** in place instead. Before retiring a sub-area, judge each page: anything holding durable knowledge is **kept behind** — promoted up to the parent folder (rename it if the old basename only made sense inside the sub-area; update `category:` to the new folder; bump `lifecycle: draft` to `reviewed` if the content is settled) or merged into a survivor. Non-page assets (PDFs, images) retire along with their pages. Afterwards remove the emptied directory (`rmdir` — it must be empty; a leftover file means something wasn't judged).
 - **distil** — replace a raw dump in place with a distilled page; move the verbatim original to `_sources/` (which needs no frontmatter).
 - **split** — break an oversized page into atomic pages plus a short hub page at the original path so inbound links survive.
 - **skip** — with one line of why (e.g. `living` dossier, event record, user says it's active).
@@ -61,7 +63,7 @@ Rules of the road:
 For each approved action, in this order (merges first, so splits/archives see the merged state):
 
 1. Apply the content change per the Page-Writing Protocol in `wiki/references/page-protocol.md` (full-path wikilinks, summary under 200 chars on any page you rewrite).
-2. Rewire inbound links: grep the vault for wikilinks to any page you merged away or moved, and repoint them at the survivor (skip `log.md` — historical entries stay verbatim).
+2. Rewire inbound links: grep the vault for wikilinks to any page you merged away or moved, and repoint them at the survivor (skip `log.md` — historical entries stay verbatim). Links to **retired** pages become plain-text archive pointers (`` `_archives/<topic>/page.md` ``), not wikilinks — a live page must never wikilink into a `_`-dir. Links *inside* retired pages are left as-is: the archive is a frozen snapshot outside wiki scope, and stale interlinks there are expected.
 3. Curated `index.md` files: remove or repoint lines for archived/merged pages (base-backed indexes need no edit).
 
 ## Step 4: Roll the Log
@@ -84,7 +86,7 @@ The script owns the mechanics (year-split archive files, frontmatter preserved).
 2. Record the operation:
    ```bash
    uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-     --log 'COMPACT merged=N archived=M distilled=K log_rolled=Y' \
+     --log 'COMPACT merged=N archived=M retired=R distilled=K log_rolled=Y' \
      --hot-entry '**Compacted the wiki.** Merged <what>, archived <what>, rolled the log.' --hot-trim 3
    ```
 3. Report to the user: what shrank, what moved where, and any candidate you recommend revisiting next time.
@@ -92,7 +94,8 @@ The script owns the mechanics (year-split archive files, frontmatter preserved).
 ## Quality Checklist
 
 - [ ] Every merge preserved the losing page's unique facts and set its `superseded_by`
-- [ ] No inbound wikilink left pointing at a merged-away path (grep to confirm)
+- [ ] No inbound wikilink left pointing at a merged-away or retired path (grep to confirm)
+- [ ] Retired sub-area's durable pages kept behind (promoted, `category:` matching the new folder); emptied directory removed
 - [ ] Raw originals parked in `_sources/`, not deleted
 - [ ] Manifest resynced via `regen-manifest.py`; lint shows no new errors
 - [ ] Operation journaled via `wiki-journal.py`
