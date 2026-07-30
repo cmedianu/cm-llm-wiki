@@ -1,16 +1,9 @@
 ---
 name: wiki-compact
 description: >
-  Shrink and consolidate the Obsidian wiki: merge near-duplicate pages, retire stale or superseded
-  content to `lifecycle: archived`, distil raw dumps into proper pages (parking the originals in
-  _sources/), and roll old log.md entries into _archives/. Use when the user says "compact the wiki",
-  "prune my wiki", "merge duplicates", "archive stale pages", "the wiki is getting bloated",
-  "rotate the log", or after wiki-lint reports oversized_page / stale_snapshot / log_size findings.
-  This is the shrink-side counterpart to wiki-ingest — it removes and consolidates, never adds knowledge.
-  Also handles the nuclear heavy-hammer mode: archive the whole wiki, rebuild it from scratch, or restore
-  a previous archive. Triggers on "rebuild the wiki", "start over", "archive and rebuild", "restore from
-  archive", "nuke and repave", "clean rebuild", or when the wiki has drifted too far from sources and
-  incremental fixes won't cut it.
+  Shrink and consolidate the Obsidian wiki: merge duplicate pages, archive stale content, distil raw
+  dumps, rotate the log. The fixer for wiki-lint findings, and handles full archive-and-rebuild or
+  restore. Counterpart to wiki-ingest — removes and consolidates, never adds.
 ---
 
 # Wiki Compact — Prune, Merge, Archive
