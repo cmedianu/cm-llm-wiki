@@ -104,11 +104,17 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   back-to-back pass `--no-verify` on every commit **except the final one**; the
   last gated commit validates the identical end state the intermediate gates
   would have seen. Never skip the gate on a batch's final commit.
-  **Never commit the current day's daily note** — a root-level `yyyy-MM-dd.md` matching
-  today's date is work-in-progress scratch, and the wiki tools (`validate-frontmatter.py`,
-  `wiki-lint.py`) skip it entirely so an empty one can't block the pre-commit gate. From
-  the next day it counts as a normal page again: give it frontmatter (or distil it into
-  real pages and delete it) before it rides along in a commit.
+  **Never commit daily notes at all.** A root-level `yyyy-MM-dd.md` is Obsidian daily-note
+  scratch, not wiki content: it is journal, it is never linked, it has no frontmatter, and it
+  exists on whichever machine happened to open Obsidian that day. Committing it syncs one
+  machine's scratchpad to every other vault and leaves permanent frontmatter-error noise in
+  `wiki-lint.py`. This holds for **every** date, not just today's — an old daily note is not
+  "a normal page now", it is stale scratch. Keep them ignored in `.gitignore`
+  (`/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md`), and if any are already tracked, untrack
+  them with `git rm --cached` so the local files survive. The wiki tools
+  (`validate-frontmatter.py`, `wiki-lint.py`) skip them so an empty one can't block the
+  pre-commit gate. Anything in a daily note worth keeping gets **distilled into a real page**;
+  the note itself is then disposable.
 - **Lint suppression is per-page and explicit.** A page that legitimately trips a
   warning-level `wiki-lint.py` check (e.g. a meeting-notes series flagged as a stale
   snapshot — meetings are events, not superseding snapshots) declares `lint_ignore:` in its

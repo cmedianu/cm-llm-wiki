@@ -42,6 +42,10 @@ import yaml
 # Basenames that are scaffolding / meta, not pages — frontmatter not required.
 ALLOW_NO_FRONTMATTER = {"index.md", "log.md", "hot.md", "CLAUDE.md", "AGENTS.md", "README.md"}
 
+# Root-level `yyyy-MM-dd.md` = Obsidian daily note. Per-machine journal scratch, not wiki
+# content, and gitignored. Skipped at ANY age, not just today's.
+DAILY_NOTE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
+
 
 class _UniqueKeyLoader(yaml.SafeLoader):
     """SafeLoader that raises on duplicate mapping keys instead of keeping the last."""
@@ -161,8 +165,8 @@ def main() -> int:
         rel = f.relative_to(vault)
         if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
             continue  # skip dotdirs (.claude, ...) and _-dirs (_raw, _bin, _strata-emails) — not wiki content
-        if len(rel.parts) == 1 and rel.name == f"{datetime.date.today().isoformat()}.md":
-            continue  # today's daily note is work-in-progress scratch — checked from tomorrow on
+        if len(rel.parts) == 1 and DAILY_NOTE_RE.fullmatch(rel.name):
+            continue  # daily notes are per-machine scratch, never wiki content, at any age
         checked += 1
         status, detail = check(f)
         if status == "OK":

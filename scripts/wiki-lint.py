@@ -65,6 +65,11 @@ import yaml
 
 SCAFFOLDING = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
 
+# Root-level `yyyy-MM-dd.md` = Obsidian daily note. Per-machine journal scratch, not
+# wiki content, and gitignored. Skipped at ANY age: an old daily note is stale scratch,
+# not "a normal page now". Anything worth keeping gets distilled into a real page.
+DAILY_NOTE_RE = re.compile(r"\d{4}-\d{2}-\d{2}\.md")
+
 # `sources` intentionally omitted: most pages here are self-authored and have no
 # external source, so requiring it produced noise instead of signal.
 REQUIRED_FRONTMATTER = {"title", "category", "tags", "created", "updated"}
@@ -173,8 +178,8 @@ def is_content_page(rel: pathlib.PurePosixPath) -> bool:
         return False
     if rel.name in SCAFFOLDING:
         return False
-    if len(parts) == 1 and rel.name == f"{date.today().isoformat()}.md":
-        return False  # today's daily note is work-in-progress scratch — a page from tomorrow on
+    if len(parts) == 1 and DAILY_NOTE_RE.fullmatch(rel.name):
+        return False  # daily notes are per-machine scratch, never wiki content, at any age
     return True
 
 
