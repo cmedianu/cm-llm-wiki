@@ -164,7 +164,7 @@ def main() -> int:
     for f in sorted(vault.rglob("*.md")):
         rel = f.relative_to(vault)
         if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
-            continue  # skip dotdirs (.claude, ...) and _-dirs (_raw, _bin, _strata-emails) — not wiki content
+            continue  # skip dotdirs (.claude, ...) and _-dirs (_raw, _bin, _archive-emails) — not wiki content
         if len(rel.parts) == 1 and DAILY_NOTE_RE.fullmatch(rel.name):
             continue  # daily notes are per-machine scratch, never wiki content, at any age
         checked += 1

@@ -48,7 +48,7 @@ The maintenance scripts (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.
 A single home-level file maps a project directory to a registered vault name, so running a wiki skill from a non-wiki project targets the right vault without dropping any file into that project's repo:
 
 ```json
-{ "/home/me/code/some-app": "personal", "/home/me/work/acme": "strata" }
+{ "/home/me/code/some-app": "personal", "/home/me/work/acme": "work" }
 ```
 
 Keys are absolute project paths; values are registry names (`config.<name>`). The quiz (step 3) writes here; `wiki-vault` reads and manages it. Keep it home-level, never per-repo, so unrelated projects stay clean and nothing leaks into git.

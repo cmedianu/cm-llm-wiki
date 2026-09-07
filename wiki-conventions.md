@@ -53,7 +53,7 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   because a category that does not mirror the folder silently hides the page from that
   folder's base-backed index.
 - **Underscore-prefixed paths (`_*`) are not wiki content.** Any top-level (or nested) dir
-  whose name starts with `_` — e.g. `_raw` (ingest staging), `_bin` (tooling), `_strata-emails`
+  whose name starts with `_` — e.g. `_raw` (ingest staging), `_bin` (tooling), `_archive-emails`
   (a source archive) — is infrastructure/staging, not council content. The wiki scripts skip
   both dotdirs (`.`) and `_`-dirs when walking the vault (`validate-frontmatter.py`,
   `regen-manifest.py`, `wiki-graph.py`), so files there need no frontmatter and never appear
