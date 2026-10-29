@@ -1,100 +1,78 @@
 ---
 name: wiki-lint
 description: >
-  Audit and maintain the health of the Obsidian wiki. Use this skill when the user wants to check their
-  wiki for issues, find orphaned pages, detect contradictions, identify stale content, fix broken wikilinks,
-  or perform general maintenance on their knowledge base. Also triggers on "clean up the wiki",
-  "what needs fixing", "audit my notes", or "wiki health check".
+  Audit and maintain the health of the Obsidian wiki, and report its state. Use this skill when the user
+  wants to check their wiki for issues, find orphaned pages, detect contradictions, identify stale content,
+  fix broken wikilinks, or perform general maintenance: "clean up the wiki", "what needs fixing", "audit
+  my notes", "wiki health check". Status mode: "wiki status", "what's pending", "what changed", "what's
+  left to ingest", "dashboard". Insights mode: "wiki insights", "show me the hubs", "what's central",
+  "bridges", "wiki structure".
 ---
 
-# Wiki Lint — Health Audit
+# Wiki Lint — Health, Status, Insights
 
-You are performing a health check on an Obsidian wiki. The **mechanical** checks are done by a deterministic script — run it, don't redo them by hand. Your job is the two things a script can't do (contradictions, judging provenance and visibility) and proposing fixes.
+The **mechanical** checks are done by a deterministic script — run it, don't redo them by hand. Your job is what a script can't do (contradictions, judging provenance and visibility) and proposing fixes. Don't burn tokens reading every page to compute things a script computes exactly and for free.
 
-This is the whole point of the framework: don't burn tokens reading every page to compute things a script computes exactly and for free.
+Three modes:
+
+- **Audit (default):** Steps 1-3 below.
+- **Status:** "what's pending / what changed / dashboard". See **Status Mode**; read-only.
+- **Insights:** hubs, bridges, tag cohesion. Read `references/insights.md`.
 
 ## Before You Start
 
-**Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md` (manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz). The scripts do their own vault resolution, so you can run them from anywhere inside the vault.
+**Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md` (manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz). The scripts resolve the vault themselves, so run them from anywhere inside it.
 
 ## Step 1: Run the deterministic linter
 
 ```bash
-uv run .claude/wiki-scripts/wiki-lint.py --format md
+uv run .claude/wiki-scripts/wiki-lint.py --summary
 ```
 
-One pass performs every mechanical check, reproducibly:
+One pass covers orphans, broken wikilinks, missing frontmatter, summaries over 200 chars, index drift and bare-basename links, stale `reviewed` pages and superseded dated snapshots, lifecycle/supersession integrity, non-date-only date fields, provenance marker ratios, misc-promotion candidates, and index privacy leaks. **Exit code 1** means at least one error-level finding. `--format json` for post-processing. (Requires `uv`; never fall back to a bare `python3`.)
 
-- **Orphaned pages** — zero incoming wikilinks
-- **Broken wikilinks** — targets that don't resolve
-- **Missing required frontmatter** — title, category, tags, sources, created, updated
-- **Summary** — missing, or over 200 chars
-- **Index consistency** — pages on disk vs `index.md`; `##` headings vs real folders; bare-basename links that should be full vault-relative paths
-- **Hardcoded inventory counts** — brittle "N pages/skills/sources/…" tallies (per the shared "no hardcoded counts" convention)
-- **Stale content** — a source modified after the page's `updated`, or a page older than 90 days
-- **Lifecycle + supersession** — invalid `lifecycle` enum values; `superseded_by` targets that are missing, archived, or cyclic
-- **Date fields** — `created` / `updated` / `lifecycle_changed` that aren't date-only `yyyy-MM-dd` (full ISO datetimes, odd strings)
-- **Provenance marker ratios** — `^[inferred]` / `^[ambiguous]` density per page, with flags (speculation-heavy, unsourced-synthesis, hub-with-high-inferred)
-- **Misc promotion candidates** — `misc/` pages whose links lean heavily into one project (computed on demand — no score is stored on pages)
-
-Read its report. **Exit code 1** means at least one error-level finding (broken links, missing frontmatter, bad lifecycle/supersession). Use `--format json` if you want to post-process the findings. (Requires `uv`; the PEP 723 header supplies `pyyaml` automatically. Never fall back to a bare `python3`.)
-
-Two flags beyond the report: `--errors-only` prints just the error-level findings (terse — made for a git pre-commit hook), and `--fix` applies the two safe mechanical fixes before checking — completing a broken or index bare-basename wikilink to its full vault-relative path when the basename matches exactly one file, and wiring `superseded_by` + `lifecycle: archived` onto a dated snapshot that has a newer sibling — then reports the post-fix state. Anything ambiguous is left for the report. A page can opt out of a specific **warning** with a `lint_ignore:` frontmatter list (e.g. `lint_ignore: [stale_snapshot]`); errors are never suppressible, and an unknown key is itself flagged.
-
-For graph-shaped questions the linter doesn't cover — **tag-cluster cohesion**, hubs, bridges — run `uv run .claude/wiki-scripts/wiki-graph.py` (see `wiki-status` insights mode). For **synthesis gaps**, run `wiki-link`'s synthesis mode (`/wiki-synthesize`).
+Useful flags: `--only key[,key]` (one check's full findings; drop `--summary`), `--staged` (the pre-commit gate runs `--staged --errors-only`), `--errors-only`. `--fix` completes a broken or bare-basename wikilink when exactly one file matches; `--fix-snapshots` wires `superseded_by` + `lifecycle: archived` onto a dated snapshot with a newer sibling (never on meeting/minutes/standup series). A page can opt out of a **warning** with `lint_ignore: [key]`; errors are never suppressible.
 
 ## Step 2: The checks a script can't do
 
-These need reading and judgement — do them after the script, focusing on pages the script flagged or that share tags / heavy cross-references.
+Focus on pages the script flagged or that share tags / heavy cross-references.
 
-### Contradictions
-
-Claims that conflict across pages.
-
-- Focus on pages that share tags or are heavily cross-referenced (the script's hub flags and `wiki-graph.py` point you at the dense areas).
-- Watch for "however", "in contrast", "despite" — they distinguish acknowledged tensions from silent ones.
-- **Fix:** add an "Open Questions" section noting the contradiction, referencing both sources and their claims.
-
-### Interpret the provenance flags
-
-The script counts the markers and flags pages; you decide what to do.
-
-- **Speculation-heavy** (AMBIGUOUS > 15%): re-ingest from sources to resolve the uncertain claims, or split the speculative part into a `synthesis/` page.
-- **Unsourced synthesis** (INFERRED-heavy, no `sources:`): add `sources:` or clearly label the page as synthesis.
-- **Hub page with high inferred** (>20% on a top-incoming-link page): prioritize re-ingestion — errors on a hub propagate to everything that links to it.
-
-### Visibility tags (PII safety)
-
-The script does not judge sensitivity — you do.
-
-- Grep page bodies for value-bearing `password`, `api_key`, `secret`, `token`, `ssn`, `email:`, `phone:` patterns. If a page has them but lacks `visibility/pii` or `visibility/internal`, flag it.
-- A `visibility/pii` page with no `sources:` can't be verified — flag it (don't auto-fill; escalate to the user).
-- `visibility/` tags are system tags — they must not appear in `_meta/taxonomy.md`.
+- **Contradictions.** Claims that conflict across pages; watch "however", "in contrast", "despite". Fix: an "Open Questions" section citing both sources.
+- **Provenance flags.** Speculation-heavy (AMBIGUOUS > 15%): re-ingest or split the speculative part into a synthesis page. Unsourced synthesis: add `sources:` or label it synthesis. Hub with high inferred: prioritize, errors on a hub propagate.
+- **Visibility (PII safety).** Grep bodies for value-bearing `password`, `api_key`, `secret`, `token`, `ssn`, `email:`, `phone:`; flag pages lacking `visibility/pii` or `visibility/internal`. A `visibility/pii` page with no `sources:` can't be verified: escalate, don't auto-fill.
 
 ## Step 3: Fix
 
-Propose fixes for the script's findings and your semantic findings. Apply the safe ones; surface the rest for the user.
+Apply the safe fixes; surface the rest.
 
 | Finding | Fix |
 |---|---|
-| Broken wikilink | Update the link, create the target, or remove it (`--fix` completes it when the basename matches exactly one file) |
-| **Many** links broke at once (folder/convention rename) | Don't fix one-by-one — use `../wiki-scripts/kebab-rename.py` (rename + wikilink rewrite + manifest re-key in lockstep; `DRY_RUN=1` to preview) |
-| Orphaned page | Add incoming links from the right pages, or run `wiki-link` |
-| Missing frontmatter / summary | Add the fields with reasonable defaults |
-| Index drift | Sync `index.md` to match disk; fix headings to mirror folders |
-| Hardcoded count | Rewrite to describe the collection, or compute at read time |
-| Stale | Re-ingest the source; staleness clears when `updated` bumps |
-| Stale dated snapshot (newer sibling) | `--fix` wires it: `superseded_by` + `lifecycle: archived` — or `lint_ignore: [stale_snapshot]` if both snapshots should stay live |
+| Broken wikilink | Update, create the target, or remove (`--fix` when the basename is unique) |
+| **Many** links broke at once (folder rename) | `wiki-mv.py OLD NEW` per page, or `kebab-rename.py` for a convention sweep (`DRY_RUN=1` first) |
+| Orphaned page | Back-link pass: `ingest-prep.py --backlinks-for <page>`, then add the links that help (see `wiki-ingest` Step 6) |
+| Missing frontmatter / summary | Add the fields |
+| Index drift | Sync `index.md` to disk; headings mirror folders |
+| Stale / stale snapshot | Re-ingest, or `--fix-snapshots`, or `lint_ignore: [stale_snapshot]` if both stay live |
 | Invalid lifecycle / broken supersession | Flag for the human — never auto-set `lifecycle` |
-| Misc promotion candidate | Move to `projects/<name>/references/`, update `category`, and grep for backlinks to update |
-| Fragmented tag cluster (from `wiki-graph.py`) | Run `wiki-link` targeted at that tag |
+| Misc promotion candidate | Move with `wiki-mv.py` to `projects/<name>/references/` |
+| oversized_page, duplicates, log_size | Hand off to `wiki-compact` |
 
-## After Linting
+Record the run (don't hand-edit `log.md`):
 
-Record the run with `wiki-journal.py` (don't hand-edit `log.md`):
 ```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-  --log 'LINT errors=E warnings=W (orphans=O broken=B stale=S …)'
+uv run .claude/wiki-scripts/wiki-journal.py --no-hot --log 'LINT errors=E warnings=W: one-line gist'
 ```
 
-Offer to fix issues automatically or let the user decide which to address. When the findings are consolidation-shaped (oversized_page, stale_snapshot, log_size, duplicate-looking pages), point the user at `wiki-compact` — it owns merging, archiving, and log rolling.
+## Status Mode
+
+A short dashboard: what changed, what is waiting to be ingested, and health. Read-only. **Never read `.manifest.json`** (it is only the vault marker plus `private_paths`). Take `<date>` from the newest `log.md` entry (`tail -n 3 log.md`), or from the user ("this week").
+
+```bash
+git -C <vault> status --short -- '*.md'                                   # uncommitted page edits
+git -C <vault> log --since=<date> --name-status --format= -- '*.md'      # pages added/modified/deleted since
+uv run .claude/wiki-scripts/ingest-prep.py --sources-dir _sources --since <date>   # external sources not yet ingested
+uv run .claude/wiki-scripts/claude-history.py sessions --since <date>             # new Claude conversations
+uv run .claude/wiki-scripts/wiki-lint.py --summary                                # health
+```
+
+Skip a line whose input does not exist (no git repo, no `_sources/`). Report in a few lines: pages changed (A/M/D counts, the notable ones by name), sources and conversations waiting, lint errors/warnings. Then recommend one next step: ingest the waiting sources (`wiki-ingest`), fix lint errors (Audit mode), or nothing. A drift so large the wiki no longer reflects its sources is a `wiki-compact` Rebuild Mode question.

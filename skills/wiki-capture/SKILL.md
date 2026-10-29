@@ -20,13 +20,20 @@ You are preserving knowledge as a permanent wiki note. The goal is to extract th
 - **Conversation capture (default):** turn the current chat into a wiki note. This is Steps 1 to 7 below. Triggers: "save this", "capture this", "file this conversation".
 - **Project sync:** run from *any* project directory to distil what you have been building (code, commits, docs) into the wiki. Triggers: "update wiki", "sync to wiki", "update obsidian". This mode has its own flow; see **Project Sync Mode** at the end. The vault resolution, Page-Writing Protocol, and tracking-file updates are shared with the default mode.
 
+**Brief mode:** if the user wants something to send (a brief, memo or PDF for other people) rather than a page for later, follow `references/brief-mode.md` instead of Steps 3-5.
+
 ## Before You Start
 
 1. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-2. Enumerate existing pages to avoid duplicates — from `.manifest.json` or a `glob` + frontmatter grep, **not** by parsing `index.md` (it may be base-backed, i.e. a query source rather than a page list)
-3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it gives context on recent activity
+2. **Run `ingest-prep.py` once** with keywords from the conversation. It returns the categories (folders on disk), `private_paths`, `index_status` per folder, and `related_pages` (existing pages on the topic: your duplicate check and link targets). `--source` is required but needs no real file here; ignore `source_status`:
 
-When writing internal links in Step 5, apply the link format from `wiki/SKILL.md` (Link Format section) using vault-relative wikilinks.
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/ingest-prep.py" --vault "$OBSIDIAN_VAULT_PATH" \
+     --source none --keywords "kw1,kw2"
+   ```
+
+   Use this instead of globbing, grepping frontmatter or parsing `index.md`.
+3. Read `$OBSIDIAN_VAULT_PATH/hot.md` if it exists — it gives context on recent activity
 
 ## Step 1: Identify What's Worth Preserving
 
@@ -59,9 +66,9 @@ Assign one of five types — this sets the **tone and body structure** (Step 5),
 | `decision` | A strategic, architectural, or design choice and its rationale |
 | `session` | A complete discussion summary when the conversation spans multiple topics |
 
-**Pick the target folder from disk, not from the type.** List the vault's top-level folders (skip `_*`/`.*` dirs) and route the note into the best-fitting **existing** category; if the content clearly belongs to a project the vault tracks as its own folder, nest it there. If no folder fits, tell the user they may create one (or fall back to a general/misc folder if the vault has one). The `category:` frontmatter equals the chosen folder.
+**Pick the target folder from disk, not from the type.** Choose from the prep JSON's `categories` and route the note into the best-fitting **existing** category; if the content clearly belongs to a project the vault tracks as its own folder, nest it there. If no folder fits, tell the user they may create one (or fall back to a general/misc folder if the vault has one). The `category:` frontmatter equals the chosen folder.
 
-**Privacy:** if the captured knowledge is private or sensitive — or belongs in a private area declared in `private_paths` — file it inside that private area and do not surface its title/summary in any more-public index. See **Privacy & Visibility** in `wiki/SKILL.md`.
+**Privacy:** if the captured knowledge is private or sensitive — or belongs in a private area listed in the prep JSON's `private_paths` — file it inside that private area and do not surface its title/summary in any more-public index. See the Privacy digest in `wiki/references/page-protocol.md`.
 
 ## Step 3: Rewrite as Declarative Knowledge
 
@@ -91,10 +98,7 @@ Derive a clear, descriptive title from the content. Slugify it:
 
 ## Step 5: Write the Wiki Note
 
-Create the file at the target path and write it **per the Page-Writing Protocol in `wiki/references/page-protocol.md`** (frontmatter fields, summary < 200 chars, `lifecycle: draft`, provenance markers, ≥2 wikilinks, journal + manifest). Two capture-specific points:
-
-- `category:` equals the folder chosen in Step 2.
-- `sources:` records the conversation as `conversation:<project>/<ISO-date>`, where `<project>` is the basename of the project directory the capture was run from (the current working directory's name, e.g. `ObsidianVault`) — so provenance records *where* the conversation happened, not just when. Result: `conversation:ObsidianVault/2026-07-04`.
+Create the page with `wiki-new.py <folder from Step 2>/<slug>` (it writes the frontmatter and `lifecycle: draft`) and write the body **per the Page-Writing Protocol in `wiki/references/page-protocol.md`** (provenance markers, ≥2 wikilinks, journal). Pass `--sources conversation:<project>/<yyyy-MM-dd>`, where `<project>` is the basename of the directory the capture ran from, e.g. `conversation:ObsidianVault/2026-07-04`, so provenance records *where* the conversation happened.
 
 Body structure by type:
 
@@ -178,21 +182,18 @@ Body structure by type:
 <[[wikilinks]]>
 ```
 
-The Protocol's ≥2-wikilink rule applies. Find link targets by scanning `.manifest.json` or a `glob` + frontmatter grep (not `index.md`, which may be base-backed). If fewer than 2 related pages exist, create minimal stubs for the most important concepts referenced.
+The Protocol's ≥2-wikilink rule applies. Take link targets from the prep JSON's `related_pages`. If fewer than 2 related pages exist, create minimal stubs for the most important concepts referenced.
+
+**Back-links:** run `ingest-prep.py --backlinks-for "<new page>"` and add the links from existing pages that genuinely help (judgement rules in `wiki-ingest` Step 6).
 
 ## Step 6: Update Tracking Files
 
-**`index.md`** — a base-backed index needs no edit (it lists pages live from frontmatter); only a hand-curated index gets a new line under its category section.
+**`index.md`** — per `index_status` in the prep JSON: `base_backed` or `hybrid` needs **no** edit (the base lists new pages from frontmatter; don't add a hand bullet to a hybrid either), only `manual` gets a new line under its category section.
 
-**`.manifest.json`** — after writing, run `regen-manifest.py` to resync it from disk; never hand-edit it.
-
-**`log.md` and `hot.md` — drive with `wiki-journal.py`, don't hand-edit.** You compose the distilled Recent-Activity line; the script owns the timestamped log append, `hot.md` prepend/trim, and `updated:` bump:
+**`log.md` and `hot.md`** — one `wiki-journal.py` line (it feeds both):
 
 ```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-  --log 'CAPTURE type=<type> page="<path>" title="<title>"' \
-  --hot-entry '**One-line summary of what was captured.** Detail with [[wikilinks]].' \
-  --hot-trim 3
+uv run .claude/wiki-scripts/wiki-journal.py --hot-trim 3 --log 'CAPTURE type=<type> [[<path>]]: one-line gist'
 ```
 
 **Key Takeaways** is semantic — the script won't touch it; edit it by hand with Edit if the note flagged something worth surfacing.
@@ -211,7 +212,7 @@ Type: synthesis
 - [ ] Content rewritten as declarative knowledge (not a chat transcript)
 - [ ] Type classified correctly; target folder is an existing category discovered from disk
 - [ ] Body follows the per-type structure
-- [ ] Written per the Page-Writing Protocol (frontmatter, summary, provenance, ≥2 links, journal, manifest)
+- [ ] Written per the Page-Writing Protocol (frontmatter, summary, provenance, ≥2 links, journal)
 - [ ] Private/sensitive content filed in its private area, not surfaced in a public index
 - [ ] Confirmed save path to user
 
@@ -234,12 +235,12 @@ and any `.claude/` memory files. Derive a clean project name from the directory 
 
 ### PS2: Compute the delta
 
-There is no per-project tracking in the manifest, so bound the delta from disk:
+Bound the delta from disk and git:
 
 - **First-time sync** (no existing vault pages for this project): full scan; everything is new.
-- **Re-sync:** find the newest `updated:` across this project's existing vault pages and only consider
-  what changed since: `git log --since="<that date>" --oneline` (or `git log <ref>..HEAD` if the user
-  gave a ref). If nothing meaningful changed, tell the user and stop.
+- **Re-sync:** take the `updated:` date of the project overview page
+  (`projects/<project-name>/<project-name>.md`) and run `git log --since="<that date>" --oneline`
+  (or `git log <ref>..HEAD` if the user gave a ref). If nothing meaningful changed, tell the user and stop.
 
 ### PS3: Decide what to distil
 
@@ -253,7 +254,7 @@ from git blame across 20 commits, wiki it.*
 
 ### PS4: Distil into wiki pages
 
-Write each page per the Page-Writing Protocol in `wiki/references/page-protocol.md`. Placement:
+Create new pages with `wiki-new.py` and write them per the Page-Writing Protocol in `wiki/references/page-protocol.md`. Placement:
 
 - **Project-specific** knowledge goes under `$VAULT/projects/<project-name>/`: an overview page
   `projects/<project-name>/<project-name>.md` (named after the project, **never** `_project.md`, because
@@ -273,13 +274,12 @@ search with 300ms delay", not the debounce function).
 
 ### PS5: Cross-link
 
-Add `[[wikilinks]]` from new pages to related existing pages and back, and link the project overview to
-all its project-specific pages and relevant global pages.
+Add `[[wikilinks]]` from new pages to related existing pages, link the project overview to its pages, and
+run the back-link pass (`ingest-prep.py --backlinks-for`, as in Step 5).
 
 ### PS6: Update tracking
 
-Same as Step 6 (default mode): resync `.manifest.json` with `regen-manifest.py`, update a hand-curated
-`index.md` only (base-backed needs none), and drive `log.md` / `hot.md` with `wiki-journal.py`, for
+Same as Step 6 (default mode): update a hand-curated `index.md` only (base-backed needs none), and drive `log.md` / `hot.md` with `wiki-journal.py`, for
 which you compose the conceptual one-line entry. Use a `WIKI_UPDATE` log op-code, e.g.
 `--log 'WIKI_UPDATE project=<name> pages_updated=X pages_created=Y source_cwd=/path/to/project'`. Edit
 the semantic **Active Threads** / **Key Takeaways** sections by hand if this sync made the project an

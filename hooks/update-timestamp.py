@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = []
 # ///
 """PostToolUse hook: stamp `updated: <yyyy-MM-dd>` on edited wiki pages.
@@ -33,7 +33,11 @@ Design:
 - Never blocks the tool: any error exits 0 silently.
 - Scoping: only files inside the vault are touched. The vault root comes from
   `$CLAUDE_PROJECT_DIR` (Claude) or the payload's `cwd` (Codex/Copilot both
-  include it), which also anchors the relative paths in Codex patches.
+  include it), which also anchors the relative paths in Codex patches. With
+  neither, the hook does nothing (it never stamps a .md outside a known vault).
+- Only content pages are stamped (the shared rule below): never dot/_ dirs
+  (`_raw/`, `_sources/`), `templates/`, root `yyyy-MM-dd.md` daily notes, or
+  scaffolding such as index.md / log.md / hot.md.
 """
 import sys
 import os
@@ -42,11 +46,28 @@ import re
 import datetime
 import pathlib
 
-# Non-page files (kept in sync with the wiki skills' allow-list).
-SKIP_NAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md",
-              "AGENTS.md", "_insights.md"}
-SKIP_DIR_PARTS = {"_sources", ".obsidian", ".claude", ".codex", ".github",
-                  ".git", ".trash"}
+# --- content-page rule (pasted verbatim into every script; scripts never import
+# each other). A vault-relative .md path is NOT a content page when any component
+# starts with "." or "_" (.obsidian, _raw, _sources, _archives), its first
+# component is "templates" (Obsidian templates folder), it is a root-level
+# yyyy-MM-dd.md daily note, or its basename is scaffolding.
+NON_PAGE_NAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+_DAILY_NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+
+
+def is_content_page(rel) -> bool:
+    """True iff the vault-relative path `rel` (str or path) is a content page."""
+    parts = [p for p in str(rel).replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    if any(p.startswith((".", "_")) for p in parts):
+        return False
+    if parts[0] == "templates":
+        return False
+    if len(parts) == 1 and _DAILY_NOTE_RE.match(parts[0]):
+        return False
+    return parts[-1] not in NON_PAGE_NAMES
+# --- end content-page rule
 
 # Codex `apply_patch` envelope: one line per touched file.
 PATCH_FILE_RE = re.compile(r"^\*\*\* (?:Update|Add) File: (.+?)\s*$", re.MULTILINE)
@@ -69,11 +90,11 @@ def candidate_paths(data: dict) -> list[str]:
     return found
 
 
-def stamp(fp: str, root: pathlib.Path | None):
+def stamp(fp: str, root: pathlib.Path):
     path = pathlib.Path(fp)
     if path.suffix != ".md":
         return
-    if not path.is_absolute() and root is not None:
+    if not path.is_absolute():
         path = root / path  # Codex patch paths are relative to the session cwd
     try:
         abspath = path.resolve()
@@ -81,34 +102,39 @@ def stamp(fp: str, root: pathlib.Path | None):
         return
 
     # Scope to the vault that registered the hook.
-    if root is not None:
-        try:
-            abspath.relative_to(root.resolve())
-        except ValueError:
-            return  # edited file is outside this vault
+    try:
+        rel = abspath.relative_to(root.resolve())
+    except ValueError:
+        return  # edited file is outside this vault
 
-    if path.name in SKIP_NAMES:
-        return
-    if SKIP_DIR_PARTS & set(abspath.parts):
-        return
+    if not is_content_page(rel.as_posix()):
+        return  # dot/_ dirs, templates/, daily notes, scaffolding
     if not abspath.exists():
         return
 
-    text = abspath.read_text(encoding="utf-8")
+    # newline="" keeps CRLF intact: only the frontmatter lines we touch change,
+    # so a Windows-authored page never becomes a whole-file line-ending diff.
+    with open(abspath, encoding="utf-8", newline="") as f:
+        text = f.read()
+    # A UTF-8 BOM (Notepad, PowerShell Set-Content) would hide the frontmatter
+    # fence; strip it for matching and put it back on write.
+    bom = "\ufeff" if text.startswith("\ufeff") else ""
+    text = text[len(bom):]
     # Only touch pages that already have YAML frontmatter; never add it.
-    m = re.match(r"^---\r?\n(.*?)\r?\n---\r?\n?", text, re.DOTALL)
+    m = re.match(r"^---\r?\n(.*?)\r?\n---(?:\r?\n|$)", text, re.DOTALL)
     if not m:
         return
+    eol = "\r\n" if text.startswith("---\r\n") else "\n"
 
     today = datetime.date.today().isoformat()  # yyyy-MM-dd, local tz
-    fm_lines = m.group(1).split("\n")
+    fm_lines = re.split(r"\r?\n", m.group(1))
     out = []
     found = False
     for ln in fm_lines:
         key = re.match(r"^(updated:\s*)(.*)$", ln)
         if key:
             found = True
-            current = key.group(2).strip().strip('"').strip("'").rstrip("\r")
+            current = key.group(2).strip().strip('"').strip("'")
             if current == today:
                 return  # already stamped today -> no write, no churn
             out.append(f"{key.group(1)}{today}")
@@ -127,26 +153,46 @@ def stamp(fp: str, root: pathlib.Path | None):
             rebuilt.append(f"updated: {today}")
         out = rebuilt
 
-    new_text = text[:m.start(1)] + "\n".join(out) + text[m.end(1):]
+    new_text = text[:m.start(1)] + eol.join(out) + text[m.end(1):]
     if new_text != text:
-        abspath.write_text(new_text, encoding="utf-8")
+        with open(abspath, "w", encoding="utf-8", newline="") as f:
+            f.write(bom + new_text)
+        hook_log("stamped", rel.as_posix())
+
+
+def hook_log(status: str, detail: str) -> None:
+    """One line in ~/.obsidian-wiki/runs.tsv when the hook stamps or fails (silence
+    otherwise), so a missed stamp is visible after the fact. WIKI_RUNLOG=0 disables."""
+    if os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = pathlib.Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        line = "\t".join([now, "update-timestamp.py", os.getcwd(), "0", status, detail, ""])
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write(line.replace("\n", " ") + "\n")
+    except Exception:
+        pass
 
 
 def run():
     raw = sys.stdin.read()
     data = json.loads(raw) if raw.strip() else {}
     proj = os.environ.get("CLAUDE_PROJECT_DIR") or data.get("cwd")
-    root = pathlib.Path(proj) if proj else None
+    if not proj:
+        return  # no vault root known: never stamp an arbitrary .md
+    root = pathlib.Path(proj)
     for fp in candidate_paths(data):
         try:
             stamp(fp, root)
-        except Exception:
-            pass  # one bad path must not stop the others
+        except Exception as e:  # one bad path must not stop the others
+            hook_log("failed", f"{fp}: {type(e).__name__}: {e}")
 
 
 if __name__ == "__main__":
     try:
         run()
-    except Exception:
-        pass  # never block the editing tool
+    except Exception as e:  # never block the editing tool
+        hook_log("failed", f"{type(e).__name__}: {e}")
     sys.exit(0)

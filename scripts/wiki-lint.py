@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["pyyaml"]
 # ///
 """Deterministic linter for an Obsidian LLM-wiki vault.
@@ -18,9 +18,9 @@ Checks performed:
   4b. Category mirrors folder — category that is neither the page's folder nor an
       ancestor of it (drift that hides the page from its folder's base index).
   5. Index consistency — pages missing from index, bad section headings, etc.
-  6. Sizes and snapshots — oversized pages, unbounded log.md, and dated snapshot
+  6. Sizes and snapshots — oversized pages, unbounded log.md, hot.md over budget, and dated snapshot
      pages that were never superseded or archived.
-  7. Stale content — pages not updated in > 90 days.
+  7. Stale content — `lifecycle: reviewed` pages not updated in > 90 days.
   8. Lifecycle + supersession — invalid lifecycle values, broken/cyclic superseded_by.
   9. Provenance marker ratios — ^[inferred] / ^[ambiguous] density by page.
   10. Misc promotion candidates — misc/ pages with strong affinity to a project.
@@ -36,16 +36,15 @@ suppress nothing.
 
 Usage:
   uv run .claude/wiki-scripts/wiki-lint.py [VAULT] [--format json|md]
-      [--errors-only] [--fix]
+      [--staged] [--only CHECK,...] [--summary] [--errors-only] [--fix] [--fix-snapshots]
 
 Exit codes:
   0  no error-level findings
   1  at least one error-level finding exists
 
-Read-only by default — writes to the vault only under --fix, which applies two
-deterministic mechanical fixes (unambiguous wikilink path completion, dated-
-snapshot supersession wiring) before running the checks. See README.md in this
-directory.
+Read-only by default. --fix completes unambiguous wikilink paths; --fix-snapshots
+wires supersession on dated snapshot families (never on meeting/minutes/standup
+series). Both run before the checks. See README.md in this directory.
 """
 
 import argparse
@@ -58,6 +57,29 @@ from datetime import date, datetime, timezone
 from typing import Optional
 
 import yaml
+
+# libyaml's C loader is ~10x faster than the pure-Python one; same results.
+_BASE_LOADER = getattr(yaml, "CSafeLoader", yaml.SafeLoader)
+
+
+class _YAML_LOADER(_BASE_LOADER):  # noqa: N801
+    """Safe loader that rejects duplicate mapping keys at any depth. Plain safe_load
+    keeps the last value silently, so a page with two `lifecycle:` keys would pass
+    while Obsidian and the scripts disagree on which value is in effect."""
+
+    def construct_mapping(self, node, deep=False):
+        seen = set()
+        for key_node, _ in node.value:
+            key = self.construct_object(key_node, deep=deep)
+            try:
+                dup = key in seen
+            except TypeError:
+                continue  # unhashable key: let the base loader raise its own error
+            if dup:
+                raise yaml.constructor.ConstructorError(
+                    None, None, f"duplicate frontmatter key: {key!r}", key_node.start_mark)
+            seen.add(key)
+        return super().construct_mapping(node, deep=deep)
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -86,10 +108,24 @@ OVERSIZED_PAGE_BYTES = 25_000
 # log.md size that triggers a roll-old-entries warning (bytes)
 LOG_SIZE_BYTES = 50_000
 
+# hot.md is read by every write-side skill; past this many words it costs more than it saves
+HOT_MAX_WORDS = 600
+
 # A dated-snapshot page (YYYY-MM-DD in the filename) older than this without
 # `superseded_by` or `lifecycle: archived` is flagged as a stale snapshot.
 STALE_SNAPSHOT_DAYS = 90
 _FILENAME_DATE_RE = re.compile(r"(\d{4}-\d{2}-\d{2})")
+
+# A dated family whose name says it is a series of events (meetings, minutes, standups)
+# is not a chain of superseding snapshots: last month's minutes are not obsolete.
+# Such families are neither flagged stale_snapshot nor rewired by --fix-snapshots.
+_EVENT_FAMILY_RE = re.compile(
+    r"(meeting|minutes|standup|stand-up|agenda|retro|journal|event|call|interview)s?\b", re.I)
+
+
+def is_event_family(page: pathlib.Path) -> bool:
+    stem = _FILENAME_DATE_RE.sub("", page.stem)
+    return bool(_EVENT_FAMILY_RE.search(stem) or _EVENT_FAMILY_RE.search(page.parent.name))
 
 # Frontmatter fields that must be date-only yyyy-MM-dd per the shared conventions
 DATE_ONLY_FIELDS = ("created", "updated", "lifecycle_changed")
@@ -98,8 +134,9 @@ _DATE_ONLY_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 # Regex to extract wikilinks:  [[target]]  or  [[target|display]]
 _WIKILINK_RE = re.compile(r"\[\[([^\]]+)\]\]")
 
-# Fenced code block detector
-_FENCE_RE = re.compile(r"^```")
+# Fenced code block detector (``` or ~~~), and inline code spans (`...`, ``...``)
+_FENCE_RE = re.compile(r"^(```|~~~)")
+_INLINE_CODE_RE = re.compile(r"(`+)(?:(?!\1).)+?\1")
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +215,8 @@ def is_content_page(rel: pathlib.PurePosixPath) -> bool:
         return False
     if rel.name in SCAFFOLDING:
         return False
+    if parts and parts[0].lower() == "templates":
+        return False  # Obsidian templates folder: templater syntax, not pages
     if len(parts) == 1 and DAILY_NOTE_RE.fullmatch(rel.name):
         return False  # daily notes are per-machine scratch, never wiki content, at any age
     return True
@@ -187,10 +226,88 @@ def is_content_page(rel: pathlib.PurePosixPath) -> bool:
 # Frontmatter helpers
 # ---------------------------------------------------------------------------
 
+# One read per page per run. utf-8-sig drops a BOM (Notepad / PowerShell write one), so a
+# BOM page's frontmatter is still detected; errors="replace" keeps one stray latin-1 page
+# from crashing the run.
+_TEXT_CACHE: dict[pathlib.Path, Optional[str]] = {}
+
+
+def prefetch_pages(paths: list[pathlib.Path]) -> None:
+    """Read pages concurrently into the cache. On a OneDrive / WSL /mnt/c mount each open
+    costs milliseconds of latency, so overlapping them is most of the win."""
+    from concurrent.futures import ThreadPoolExecutor
+    todo = [p for p in paths if p not in _TEXT_CACHE]
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        for path, text in zip(todo, pool.map(_read_uncached, todo)):
+            _TEXT_CACHE[path] = text
+
+
+def _read_uncached(path: pathlib.Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        return None
+
+
+def read_page(path: pathlib.Path) -> Optional[str]:
+    if path in _TEXT_CACHE:
+        return _TEXT_CACHE[path]
+    try:
+        text = path.read_text(encoding="utf-8-sig", errors="replace")
+    except OSError:
+        text = None
+    _TEXT_CACHE[path] = text
+    return text
+
+
+class VaultFiles:
+    """One pruned walk of the vault, shared by every check.
+
+    Dot-dirs and `_`-dirs are pruned (never content, and `_` archives such as a mailbox
+    dump can hold thousands of files). `by_lower` maps every remaining file's lowercased
+    vault-relative posix path to its Path, so wikilinks resolve in memory and
+    case-insensitively, as Obsidian does, instead of one stat() per link.
+    """
+
+    def __init__(self, vault: pathlib.Path):
+        self.vault = vault
+        self.md: list[pathlib.Path] = []
+        self.by_lower: dict[str, pathlib.Path] = {}
+        self.top_dirs: set[str] = set()
+        for root, dirs, files in os.walk(vault):
+            dirs[:] = sorted(d for d in dirs if not d.startswith((".", "_")))
+            rootp = pathlib.Path(root)
+            if rootp == vault:
+                self.top_dirs = set(dirs)
+            rel_root = rootp.relative_to(vault).as_posix()
+            for name in sorted(files):
+                rel = name if rel_root == "." else f"{rel_root}/{name}"
+                path = rootp / name
+                self.by_lower[rel.lower()] = path
+                if name.endswith(".md"):
+                    self.md.append(path)
+        self.indexes = [p for p in self.md if p.name == "index.md"]
+
+    def lookup(self, rel: str) -> Optional[pathlib.Path]:
+        rel = rel.strip().lstrip("/")
+        hit = self.by_lower.get(rel.lower())
+        if hit is not None:
+            return hit
+        # Targets inside pruned dirs (e.g. [[_sources/x.pdf]]) are rare: stat those.
+        if any(part.startswith((".", "_")) for part in pathlib.PurePosixPath(rel).parts):
+            cand = self.vault / rel
+            if cand.is_file():
+                return cand
+        return None
+
+
+FILES: Optional[VaultFiles] = None
+
+
 # Pages whose frontmatter block exists but does not parse as a YAML mapping
 # (e.g. an unquoted `: ` in a value). Populated by load_frontmatter so
 # check_frontmatter_fields can report invalid_frontmatter, not missing_frontmatter.
-INVALID_YAML: set[pathlib.Path] = set()
+INVALID_YAML: dict[pathlib.Path, str] = {}
 
 # Parse-once caches — a lint run reads each page many times across checks;
 # files don't change mid-run, so memoize the two hot parsers.
@@ -212,9 +329,8 @@ def load_frontmatter(path: pathlib.Path) -> Optional[dict]:
 
 
 def _load_frontmatter_uncached(path: pathlib.Path) -> Optional[dict]:
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = read_page(path)
+    if text is None:
         return None
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
@@ -225,16 +341,16 @@ def _load_frontmatter_uncached(path: pathlib.Path) -> Optional[dict]:
             end = i
             break
     if end is None:
-        INVALID_YAML.add(path)
+        INVALID_YAML[path] = "no closing '---' delimiter"
         return None
     block = "\n".join(lines[1:end])
     try:
-        data = yaml.safe_load(block)
-    except yaml.YAMLError:
-        INVALID_YAML.add(path)
+        data = yaml.load(block, Loader=_YAML_LOADER)
+    except yaml.YAMLError as e:
+        INVALID_YAML[path] = " ".join(str(e).split())
         return None
     if not isinstance(data, dict):
-        INVALID_YAML.add(path)
+        INVALID_YAML[path] = f"frontmatter parsed as {type(data).__name__}, not a mapping"
         return None
     return data
 
@@ -251,9 +367,8 @@ def extract_wikilinks(path: pathlib.Path) -> list[tuple[int, str]]:
     """
     if path in _LINK_CACHE:
         return _LINK_CACHE[path]
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
+    text = read_page(path)
+    if text is None:
         _LINK_CACHE[path] = []
         return []
     lines = text.splitlines()
@@ -267,13 +382,18 @@ def extract_wikilinks(path: pathlib.Path) -> list[tuple[int, str]]:
                 break
 
     results = []
-    in_fence = False
+    fence = None  # the marker that opened the current fence; ``` does not close ~~~
     for lineno, line in enumerate(lines[start:], start=start + 1):
-        if _FENCE_RE.match(line.strip()):
-            in_fence = not in_fence
+        fm_ = _FENCE_RE.match(line.strip())
+        if fm_:
+            if fence is None:
+                fence = fm_.group(1)
+            elif fm_.group(1) == fence:
+                fence = None
             continue
-        if in_fence:
+        if fence is not None:
             continue
+        line = _INLINE_CODE_RE.sub("", line)  # `[[x]]` in a how-to is an example, not a link
         for m in _WIKILINK_RE.finditer(line):
             raw = m.group(1)
             # strip display alias; treat a table-escaped pipe (\|) as a normal alias
@@ -308,13 +428,10 @@ def build_resolver(vault: pathlib.Path, content_pages: list[pathlib.Path]):
         by_basename.setdefault(stem, []).append(p)
 
     def resolve(target: str) -> Optional[pathlib.Path]:
-        # (a) vault-relative path
-        candidate = vault / (target + ".md")
-        if candidate.is_file():
-            return candidate
-        candidate2 = vault / target
-        if candidate2.is_file():
-            return candidate2
+        # (a) vault-relative path, case-insensitive (in memory, no stat per link)
+        hit = FILES.lookup(target + ".md") or FILES.lookup(target)
+        if hit is not None:
+            return hit
         # (b) unique basename match (case-insensitive)
         key = target.lower()
         matches = by_basename.get(key, [])
@@ -336,16 +453,13 @@ def build_resolver(vault: pathlib.Path, content_pages: list[pathlib.Path]):
 
 def find_all_indexes(vault: pathlib.Path) -> list[pathlib.Path]:
     """All index.md files in the vault (root + section indexes), skipping dot/underscore dirs."""
-    out = []
-    for f in sorted(vault.rglob("index.md")):
-        rel = f.relative_to(vault)
-        if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
-            continue
-        out.append(f)
-    return out
+    return list(FILES.indexes)
 
 
 _BASE_FENCE_RE = re.compile(r"(?m)^\s*`{3,}\s*base\b")
+
+
+_BASE_DIRS: Optional[set[pathlib.Path]] = None
 
 
 def index_base_dirs(vault: pathlib.Path) -> set[pathlib.Path]:
@@ -353,26 +467,21 @@ def index_base_dirs(vault: pathlib.Path) -> set[pathlib.Path]:
     catalog). A content page under such a directory is considered catalogued by that
     index, so it should not be flagged missing-from-index or orphaned just because the
     listing is a live query instead of hand-written wikilinks."""
+    global _BASE_DIRS
+    if _BASE_DIRS is not None:
+        return _BASE_DIRS
     dirs: set[pathlib.Path] = set()
     for idx in find_all_indexes(vault):
-        try:
-            text = idx.read_text(encoding="utf-8", errors="replace")
-        except OSError:
-            continue
-        if _BASE_FENCE_RE.search(text):
+        text = read_page(idx)
+        if text and _BASE_FENCE_RE.search(text):
             dirs.add(idx.parent)
+    _BASE_DIRS = dirs
     return dirs
 
 
 def covered_by_base_index(page: pathlib.Path, base_dirs: set[pathlib.Path]) -> bool:
     """True if the page lives under a directory whose index.md is base-backed."""
-    for d in base_dirs:
-        try:
-            page.relative_to(d)
-            return True
-        except ValueError:
-            continue
-    return False
+    return any(parent in base_dirs for parent in page.parents)
 
 
 def load_private_paths(vault: pathlib.Path) -> list[str]:
@@ -481,8 +590,8 @@ def check_frontmatter_fields(
                 # Properties panel. Most common cause: an unquoted `: ` in a value.
                 out.append(finding(
                     "error", "invalid_frontmatter", rel,
-                    "frontmatter block does not parse as YAML (unquoted ': ' in a "
-                    "value? unclosed block?) — Obsidian will not render Properties",
+                    "frontmatter does not parse (Obsidian will not render Properties; "
+                    "unquoted ': ' in a value is the usual cause): " + INVALID_YAML[page],
                 ))
             else:
                 out.append(finding(
@@ -565,14 +674,11 @@ def check_index_consistency(
     if not index_path.is_file():
         return out
 
-    index_text = index_path.read_text(encoding="utf-8", errors="replace")
+    index_text = read_page(index_path) or ""
     index_rel = "index.md"
 
     # Collect top-level folder names
-    top_level_folders = {
-        p.name for p in vault.iterdir()
-        if p.is_dir() and not p.name.startswith(".") and not p.name.startswith("_")
-    }
+    top_level_folders = set(FILES.top_dirs)
 
     # (a) content pages not referenced in ANY index.md (root or a section index).
     # The root index links down to section indexes; pages in a sub-area (e.g. a private
@@ -618,6 +724,11 @@ def check_index_consistency(
             m = re.match(r"^##\s+(.+)$", line)
             if m:
                 heading = m.group(1).strip()
+                # Only a heading that could be a folder name (one token, e.g. "AI",
+                # "ev-charging" style) can mismatch; "## To add" or "## Open questions"
+                # are editorial sections, not claims about a folder.
+                if " " in heading:
+                    continue
                 if heading.lower() not in folders_ci and heading.lower() not in meta_ci:
                     out.append(finding(
                         "warning", "index_heading_mismatch", index_rel,
@@ -640,6 +751,26 @@ def check_index_consistency(
                         f" (should be [[{rel_to_vault.with_suffix('').as_posix()}]])",
                         lineno,
                     ))
+
+    # (e) hybrid indexes: a base-backed index that ALSO hand-lists pages its base
+    # already shows. Every new page then needs a hand edit the base made unnecessary,
+    # and the two lists drift. One warning per index, not per line.
+    for idx in find_all_indexes(vault):
+        if idx.parent not in base_dirs:
+            continue
+        dupes = []
+        for _lineno, target in extract_wikilinks(idx):
+            r = resolve(target)
+            if r is not None and r != idx and r.name != "index.md" and idx.parent in r.parents \
+                    and is_content_page(pathlib.PurePosixPath(r.relative_to(vault).as_posix())):
+                dupes.append(r.relative_to(idx.parent).with_suffix("").as_posix())
+        if dupes:
+            shown = ", ".join(dupes[:3]) + (f" (+{len(dupes) - 3} more)" if len(dupes) > 3 else "")
+            out.append(finding(
+                "warning", "index_hand_list", idx.relative_to(vault).as_posix(),
+                f"base-backed index also hand-lists {len(dupes)} page(s) the base already shows: "
+                f"{shown}. Drop the hand list, or move what it adds into page frontmatter + base columns",
+            ))
 
     return out
 
@@ -666,10 +797,10 @@ def check_sizes_and_snapshots(
 
     for page in content_pages:
         rel = str(page.relative_to(vault))
-        try:
-            size = page.stat().st_size
-        except OSError:
+        text = read_page(page)
+        if text is None:
             continue
+        size = len(text.encode("utf-8"))
         fm = load_frontmatter(page) or {}
         lifecycle = fm.get("lifecycle")
 
@@ -681,7 +812,7 @@ def check_sizes_and_snapshots(
             ))
 
         m = _FILENAME_DATE_RE.search(page.stem)
-        if m:
+        if m and not is_event_family(page):
             stem_key = (page.parent, _FILENAME_DATE_RE.sub("<date>", page.stem))
             snapshot_groups.setdefault(stem_key, []).append((m.group(1), page))
 
@@ -713,6 +844,21 @@ def check_sizes_and_snapshots(
                 "warning", "log_size", "log.md",
                 f"log.md is {log_size // 1024} KB; roll old entries into _archives/ "
                 "with `wiki-journal.py --log-trim N`",
+            ))
+
+    hot_path = vault / "hot.md"
+    hot_text = read_page(hot_path) if hot_path.is_file() else None
+    if hot_text:
+        body = hot_text
+        if body.startswith("---"):
+            end = body.find("\n---", 3)
+            body = body[end + 4:] if end != -1 else body
+        words = len(body.split())
+        if words > HOT_MAX_WORDS:
+            out.append(finding(
+                "warning", "hot_size", "hot.md",
+                f"hot.md is {words} words (budget {HOT_MAX_WORDS}); trim Recent Activity with "
+                "`wiki-journal.py --hot-trim N` and prune stale Active Threads / session sections",
             ))
 
     return out
@@ -754,7 +900,11 @@ def check_stale_content(
         if updated_date is None:
             continue
 
-        # Age overlay: > 90 days
+        # Age overlay: > 90 days, only for pages someone marked `reviewed`. A draft or
+        # an evergreen how-to is not wrong for being old, so flagging half the vault
+        # buried every real finding; dated snapshots are covered by stale_snapshot.
+        if fm.get("lifecycle") != "reviewed":
+            continue
         age_days = (today - updated_date).days
         if age_days > 90:
             out.append(finding(
@@ -817,6 +967,8 @@ def check_lifecycle(
 
         # Target must not be archived
         target_lc = page_lifecycle.get(resolved)
+        if target_lc is None:  # target outside the checked set (e.g. --staged)
+            target_lc = (load_frontmatter(resolved) or {}).get("lifecycle")
         if target_lc == "archived":
             out.append(finding(
                 "error", "superseded_by_archived", rel,
@@ -834,6 +986,9 @@ def check_lifecycle(
     # Cycle detection in supersession graph
     def resolve_sb(p: pathlib.Path) -> Optional[pathlib.Path]:
         raw = page_superseded_by.get(p)
+        if raw is None:  # follow the chain beyond the checked set (e.g. --staged)
+            sb = (load_frontmatter(p) or {}).get("superseded_by")
+            raw = str(sb) if sb is not None else None
         if raw is None:
             return None
         target = raw.strip()
@@ -887,9 +1042,8 @@ def check_provenance_ratios(
         sources = fm.get("sources") if fm else None
         has_sources = bool(sources and isinstance(sources, list) and len(sources) > 0)
 
-        try:
-            text = page.read_text(encoding="utf-8", errors="replace")
-        except OSError:
+        text = read_page(page)
+        if text is None:
             continue
         lines = text.splitlines()
 
@@ -937,6 +1091,8 @@ def check_provenance_ratios(
         if page in hub_pages and inferred_frac > 0.20:
             flags.append(f"high-traffic page, questionable provenance ({inferred_frac:.0%} inferred)")
 
+        if not flags:
+            continue  # a stored ratio per clean page is noise; only flagged pages report
         provenance_records.append({
             "file": rel,
             "claim_lines": claim_lines,
@@ -1188,11 +1344,8 @@ def build_fix_candidates(
     by_key: dict[str, list[pathlib.Path]] = {}
     for p in content_pages:
         by_key.setdefault(p.stem.lower(), []).append(p)
-    for f in sorted(vault.rglob("*")):
-        if not f.is_file() or f.suffix == ".md":
-            continue
-        rel = f.relative_to(vault)
-        if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
+    for f in FILES.by_lower.values():
+        if f.suffix == ".md":
             continue
         by_key.setdefault(f.name.lower(), []).append(f)
     return by_key
@@ -1228,13 +1381,16 @@ def fix_link_paths(
             # newline='' keeps CRLF intact so the rewrite stays byte-surgical
             with open(page, encoding="utf-8", newline="") as fh:
                 text = fh.read()
+        except UnicodeDecodeError:
+            print(f"fix: skipped {rel}: not valid UTF-8", file=sys.stderr)
+            continue
         except OSError:
             continue
         lines = text.split("\n")
 
         # Skip frontmatter (same extent logic as extract_wikilinks)
         start = 0
-        if lines and lines[0].strip() == "---":
+        if lines and lines[0].lstrip("\ufeff").strip() == "---":
             for i in range(1, len(lines)):
                 if lines[i].strip() == "---":
                     start = i + 1
@@ -1294,10 +1450,13 @@ def _wire_supersession(page: pathlib.Path, target_rel: str, today: str) -> bool:
     try:
         with open(page, encoding="utf-8", newline="") as fh:
             text = fh.read()
+    except UnicodeDecodeError:
+        print(f"fix: skipped {page.name}: not valid UTF-8", file=sys.stderr)
+        return False
     except OSError:
         return False
     lines = text.split("\n")
-    if not lines or lines[0].strip() != "---":
+    if not lines or lines[0].lstrip("\ufeff").strip() != "---":
         return False
     end = None
     for i in range(1, len(lines)):
@@ -1358,7 +1517,7 @@ def fix_snapshot_supersession(
     snapshot_groups: dict[tuple, list[tuple[str, pathlib.Path]]] = {}
     for page in content_pages:
         m = _FILENAME_DATE_RE.search(page.stem)
-        if m:
+        if m and not is_event_family(page):
             stem_key = (page.parent, _FILENAME_DATE_RE.sub("<date>", page.stem))
             snapshot_groups.setdefault(stem_key, []).append((m.group(1), page))
 
@@ -1409,6 +1568,8 @@ _CATEGORY_SECTION = {
     "index_bare_basename": "Index Bare-Basename Wikilinks",
     "oversized_page": "Oversized Pages",
     "log_size": "Log Growth",
+    "hot_size": "hot.md Over Budget",
+    "index_hand_list": "Hand Lists in Base-Backed Indexes",
     "stale_snapshot": "Stale Dated Snapshots",
     "stale_age": "Stale Pages (Age)",
     "invalid_lifecycle": "Invalid Lifecycle",
@@ -1499,6 +1660,76 @@ def resolve_page_globs(vault: pathlib.Path, patterns: list[str]) -> set[str]:
     return selected
 
 
+def staged_changes(vault: pathlib.Path) -> tuple[set[str], set[str]]:
+    """(staged, removed) from the git index, both vault-relative posix paths.
+
+    staged: added/copied/modified/renamed-to .md files. removed: deleted or
+    renamed-from .md paths without the suffix, lowercased, so links that pointed at
+    them can be reported as broken by this commit."""
+    import subprocess
+
+    def git(*a):
+        return subprocess.run(["git", "-C", str(vault), *a], capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", check=True).stdout
+    try:
+        top = pathlib.Path(git("rev-parse", "--show-toplevel").strip())
+        out = git("diff", "--cached", "--name-status", "-M", "-z")
+    except (OSError, subprocess.CalledProcessError) as e:
+        raise SystemExit(f"--staged: not a git repository or git failed: {e}")
+    vault_real = pathlib.Path(os.path.realpath(vault))
+    top_real = pathlib.Path(os.path.realpath(top))
+
+    def vrel(p: str) -> Optional[str]:
+        try:
+            return (top_real / p).relative_to(vault_real).as_posix()
+        except ValueError:
+            return None  # outside the vault
+
+    staged: set[str] = set()
+    removed: set[str] = set()
+    tokens = out.split("\0")
+    i = 0
+    while i < len(tokens) and tokens[i]:
+        status = tokens[i]
+        if status[0] in "RC":
+            old, new = tokens[i + 1], tokens[i + 2]
+            i += 3
+            if status[0] == "R" and old.endswith(".md") and vrel(old):
+                removed.add(vrel(old)[:-3].lower())
+            if new.endswith(".md") and vrel(new):
+                staged.add(vrel(new))
+            continue
+        path = tokens[i + 1]
+        i += 2
+        rel = vrel(path)
+        if rel is None or not path.endswith(".md"):
+            continue
+        if status[0] == "D":
+            removed.add(rel[:-3].lower())
+        else:
+            staged.add(rel)
+    return staged, removed
+
+
+_BROKEN_TARGET_RE = re.compile(r"\[\[(.+)\]\]")
+
+
+def format_summary(findings: list[dict], pages_checked: int, examples: int = 3) -> str:
+    """One line per check, worst first, with a few example locations."""
+    by_cat: dict[str, list[dict]] = {}
+    for f in findings:
+        by_cat.setdefault(f["category"], []).append(f)
+    order = sorted(by_cat.items(), key=lambda kv: (kv[1][0]["severity"] != "error", -len(kv[1]), kv[0]))
+    lines = []
+    for cat, items in order:
+        locs = ", ".join(i["file"] + (f":{i['line']}" if "line" in i else "") for i in items[:examples])
+        more = f" (+{len(items) - examples} more)" if len(items) > examples else ""
+        lines.append(f"{items[0]['severity']:7} {cat:28} {len(items):4}  {locs}{more}")
+    errors = sum(1 for f in findings if f["severity"] == "error")
+    lines.append(f"{errors} errors, {len(findings) - errors} warnings across {pages_checked} pages checked.")
+    return "\n".join(lines)
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Deterministic linter for an Obsidian LLM-wiki vault.",
@@ -1521,6 +1752,20 @@ def main() -> int:
              "just these pages; graph-wide checks still compute against the full vault.",
     )
     parser.add_argument(
+        "--staged", action="store_true",
+        help="Lint what is being committed: report findings only for .md files staged in "
+             "git, plus links elsewhere broken by staged deletions or renames. With "
+             "--errors-only only the staged pages are read (the pre-commit gate).",
+    )
+    parser.add_argument(
+        "--only", metavar="CHECK[,CHECK]",
+        help="Report only these check keys (e.g. --only broken_link,stale_snapshot).",
+    )
+    parser.add_argument(
+        "--summary", action="store_true",
+        help="Terse output: one line per check with a count and example locations.",
+    )
+    parser.add_argument(
         "--errors-only", action="store_true",
         help="Report only error-level findings (terse, for a git pre-commit gate). "
              "Warnings are neither shown nor counted; exit code semantics unchanged.",
@@ -1528,30 +1773,50 @@ def main() -> int:
     parser.add_argument(
         "--fix", action="store_true",
         help="Apply safe mechanical fixes before checking: complete unambiguous "
-             "broken/bare-basename wikilinks to full vault-relative paths, and wire "
-             "superseded_by + lifecycle on stale dated snapshots. One line per fix; "
+             "broken/bare-basename wikilinks to full vault-relative paths (see also "
+             "--fix-snapshots). One line per fix; "
              "the report then reflects the post-fix state.",
+    )
+    parser.add_argument(
+        "--fix-snapshots", action="store_true",
+        help="Wire superseded_by + lifecycle: archived on the older members of a dated "
+             "snapshot family (planning-<date>, position-review-<date>). Never touches "
+             "event series (meetings, minutes, standups). Separate from --fix on purpose.",
     )
     args = parser.parse_args()
 
-    if args.fix and args.errors_only:
-        parser.error("--fix cannot be combined with --errors-only")
+    if (args.fix or args.fix_snapshots) and (args.errors_only or args.staged):
+        parser.error("--fix/--fix-snapshots cannot be combined with --errors-only or --staged")
 
     vault = resolve_vault(args.vault_flag or args.vault)
 
-    # Collect all .md files, build content page list
-    all_md: list[pathlib.Path] = []
-    for f in sorted(vault.rglob("*.md")):
-        rel = f.relative_to(vault)
-        if any(part.startswith(".") for part in rel.parts):
-            continue
-        all_md.append(f)
+    staged: set[str] = set()
+    removed: set[str] = set()
+    if args.staged:
+        staged, removed = staged_changes(vault)
+        if not staged and not removed:
+            print("No staged pages to lint." if args.format == "md" or args.summary
+                  else format_json(vault, [], [], 0))
+            return 0
+
+    # One pruned walk for the whole run (dot- and _-dirs skipped)
+    global FILES
+    FILES = VaultFiles(vault)
+    all_md = FILES.md
 
     content_pages = [
         f for f in all_md
         if is_content_page(pathlib.PurePosixPath(f.relative_to(vault).as_posix()))
     ]
 
+    # The pre-commit fast path: errors only, nothing deleted, so per-page checks need
+    # only the staged pages (the resolver works from the walk, not from page bodies).
+    fast_staged = args.staged and args.errors_only and not removed
+    if fast_staged:
+        check_pages = [p for p in content_pages if p.relative_to(vault).as_posix() in staged]
+    else:
+        check_pages = content_pages
+    prefetch_pages(check_pages + FILES.indexes)
     resolve = build_resolver(vault, content_pages)
     private_paths = load_private_paths(vault)
 
@@ -1560,49 +1825,55 @@ def main() -> int:
     # a wired snapshot stops being a stale_snapshot).
     if args.fix:
         fix_link_paths(vault, content_pages, resolve)
+    if args.fix_snapshots:
         fix_snapshot_supersession(vault, content_pages)
+    if args.fix or args.fix_snapshots:
+        # the fixes rewrote files: drop every per-run cache so checks see the new state
+        for cache in (_TEXT_CACHE, _FM_CACHE, _LINK_CACHE):
+            cache.clear()
+        INVALID_YAML.clear()
 
     all_findings: list[dict] = []
 
     # Check 2 + 1: broken links and orphans (also covers check 5b for index)
-    link_findings, incoming = check_broken_links_and_orphans(vault, content_pages, resolve)
+    link_findings, incoming = check_broken_links_and_orphans(vault, check_pages, resolve)
     all_findings.extend(link_findings)
 
     # Check 3 + 4: frontmatter fields and summary
-    all_findings.extend(check_frontmatter_fields(vault, content_pages))
+    all_findings.extend(check_frontmatter_fields(vault, check_pages))
 
     # Check 4b: category mirrors the folder (else the page hides from its folder base)
-    all_findings.extend(check_category_folder_match(vault, content_pages))
+    all_findings.extend(check_category_folder_match(vault, check_pages))
 
     # Check 5: index consistency
-    all_findings.extend(check_index_consistency(vault, content_pages, resolve))
+    all_findings.extend(check_index_consistency(vault, check_pages, resolve))
 
     # Check 6: sizes and snapshots (oversized pages, log growth, stale dated snapshots)
-    all_findings.extend(check_sizes_and_snapshots(vault, content_pages))
+    all_findings.extend(check_sizes_and_snapshots(vault, check_pages))
 
     # Check 7: stale content
-    all_findings.extend(check_stale_content(vault, content_pages))
+    all_findings.extend(check_stale_content(vault, check_pages))
 
     # Check 8: lifecycle + supersession
-    all_findings.extend(check_lifecycle(vault, content_pages, resolve))
+    all_findings.extend(check_lifecycle(vault, check_pages, resolve))
 
     # Check 9: provenance ratios
-    prov_findings, provenance_records = check_provenance_ratios(vault, content_pages, incoming)
+    prov_findings, provenance_records = check_provenance_ratios(vault, check_pages, incoming)
     all_findings.extend(prov_findings)
 
     # Check 10: misc promotion candidates
-    all_findings.extend(check_misc_promotion(vault, content_pages, resolve))
+    all_findings.extend(check_misc_promotion(vault, check_pages, resolve))
 
     # Check 11: index privacy leak
     all_findings.extend(check_index_privacy_leak(vault, content_pages, resolve, private_paths))
 
     # Check 12: date-only date fields
-    all_findings.extend(check_date_format(vault, content_pages))
+    all_findings.extend(check_date_format(vault, check_pages))
 
     # Per-page suppression: a warning whose check key is listed in its page's
     # `lint_ignore:` frontmatter is dropped before reporting, so it counts toward
     # neither the summary nor the exit code. Errors are never suppressible.
-    ignore_map, ignore_findings = collect_lint_ignore(vault, content_pages)
+    ignore_map, ignore_findings = collect_lint_ignore(vault, check_pages)
     all_findings.extend(ignore_findings)
     all_findings = [
         f for f in all_findings
@@ -1610,16 +1881,32 @@ def main() -> int:
                 and f["category"] in ignore_map.get(f["file"], ()))
     ]
 
-    pages_checked = len(content_pages)
+    pages_checked = len(check_pages)
 
-    # --pages: everything above computed against the whole vault (so graph-wide
-    # checks — orphans, incoming links, index coverage — stay correct); now scope
-    # what we REPORT down to the requested pages by their file key.
+    # --pages / --staged: everything above computed against the whole vault (so
+    # graph-wide checks stay correct, except on the --staged --errors-only fast path,
+    # which has only per-page error checks); now scope what we REPORT.
     if args.pages:
         page_filter = resolve_page_globs(vault, args.pages)
         all_findings = [f for f in all_findings if f["file"] in page_filter]
         provenance_records = [p for p in provenance_records if p["file"] in page_filter]
         pages_checked = len(page_filter)
+    if args.staged:
+        def in_scope(f: dict) -> bool:
+            if f["file"] in staged:
+                return True
+            if f["category"] in ("broken_link", "index_broken_link") and removed:
+                m = _BROKEN_TARGET_RE.search(f["message"])
+                t = m.group(1).strip().lower() if m else ""
+                return (t[:-3] if t.endswith(".md") else t) in removed
+            return False
+        all_findings = [f for f in all_findings if in_scope(f)]
+        provenance_records = [p for p in provenance_records if p["file"] in staged]
+        pages_checked = len(staged)
+
+    if args.only:
+        wanted = {k.strip() for k in args.only.split(",") if k.strip()}
+        all_findings = [f for f in all_findings if f["category"] in wanted]
 
     # --errors-only: warnings (and the warning-flavoured provenance records) are
     # dropped entirely — not shown, not counted. Exit code is unchanged either way.
@@ -1627,15 +1914,58 @@ def main() -> int:
         all_findings = [f for f in all_findings if f["severity"] == "error"]
         provenance_records = []
 
-    if args.format == "md":
+    if args.summary:
+        print(format_summary(all_findings, pages_checked))
+    elif args.format == "md":
         print(format_md(vault, all_findings, provenance_records, pages_checked,
                         errors_only=args.errors_only))
     else:
         print(format_json(vault, all_findings, provenance_records, pages_checked))
 
     has_errors = any(f["severity"] == "error" for f in all_findings)
+    RUN_STATS.update(pages=pages_checked, walked=len(content_pages),
+                     errors=sum(f["severity"] == "error" for f in all_findings),
+                     warnings=sum(f["severity"] == "warning" for f in all_findings),
+                     mode="staged" if args.staged else "full")
     return 1 if has_errors else 0
 
 
+# --- run log (copied verbatim into every script, like resolve_vault) ---------
+# One TSV line per run in ~/.obsidian-wiki/runs.tsv: when, script, cwd, seconds,
+# exit code, args, and any RUN_STATS the script filled in. Machine-local, never
+# inside a vault; `claude-history.py runs` summarizes it. WIKI_RUNLOG=0 disables.
+# Never raises: logging must not break the tool.
+RUN_STATS: dict = {}
+
+
+def log_run(t0: float, rc) -> None:
+    import os as _os, sys as _sys, time as _time
+    from datetime import datetime as _dt
+    if _os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = __import__("pathlib").Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        fields = [_dt.now().isoformat(timespec="seconds"),
+                  __import__("pathlib").Path(_sys.argv[0]).name, _os.getcwd(),
+                  f"{_time.monotonic() - t0:.2f}", str(rc), " ".join(_sys.argv[1:])[:300],
+                  " ".join(f"{k}={v}" for k, v in RUN_STATS.items())]
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write("\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
+    except Exception:
+        pass
+# --- end run log -------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    import time as _time
+    _t0, _rc = _time.monotonic(), 1
+    try:
+        _rc = main()
+        _rc = 0 if _rc is None else _rc
+    except SystemExit as _e:
+        _rc = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+        raise
+    finally:
+        log_run(_t0, _rc)
+    sys.exit(_rc)

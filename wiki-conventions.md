@@ -1,7 +1,7 @@
 # LLM Wiki — Operating Conventions (shared)
 
 Conventions shared by every Obsidian vault managed by the **wiki-\* skill family**
-(`wiki`, `wiki-ingest`, `wiki-capture`, `wiki-query`, `wiki-link`, `wiki-lint`, …).
+(`wiki`, `wiki-capture`, `wiki-ingest`, `wiki-query`, `wiki-lint`, `wiki-compact`, …).
 
 This file lives in the **`cm-llm-wiki` master repo** and is symlinked into each vault at
 `.claude/wiki-conventions.md`, then imported from that vault's `CLAUDE.md` with
@@ -23,7 +23,8 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
 
 **Route work through the skills — do not hand-edit pages ad hoc.** Adding knowledge →
 `wiki-ingest` / `wiki-capture`. Answering questions → `wiki-query`. Cross-linking →
-`wiki-link`. Health/cleanup → `wiki-lint`. The skills enforce the conventions below.
+the back-link pass in `wiki-ingest`. Health, status → `wiki-lint`. Merging, archiving →
+`wiki-compact`. Journal lines → `wiki-journal.py`. The skills enforce the conventions below.
 
 ## Conventions
 
@@ -33,7 +34,7 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
 - **Date fields are date-only (`yyyy-MM-dd`).** `created:` and `updated:` (and any other
   date value) are written as `2026-07-20`, **never** as a full ISO datetime
   (`2026-07-20T00:00:00Z`). This matches the `update-timestamp.py` hook, which already stamps `updated:`
-  date-only. The page-protocol template shows ISO datetimes — ignore that here; date-only wins.
+  date-only.
 - **Frontmatter values with a colon-space (`: `) must be quoted or rewritten.** In YAML
   `: ` is the key/value separator, so an unquoted value like `title: Acme: A Platform`
   or `summary: site: operators ...` is a parse error and Obsidian silently fails to render
@@ -41,7 +42,7 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   with an em dash, or reword the prose). If the colon is intrinsic — a real proper-name title
   like `"Helios: A Wearable Translator"` — **double-quote the value** instead. Same
   applies to other YAML metacharacters at the start of a value (`#`, `&`, `*`, `[`, `{`, `>`, `|`, `@`, `` ` ``).
-  Check the whole vault with `uv run .claude/wiki-scripts/validate-frontmatter.py` (exit 0 = clean);
+  Check the whole vault with `uv run .claude/wiki-scripts/wiki-lint.py --errors-only --summary` (exit 0 = clean);
   run it after any bulk frontmatter edit or ingest.
 - **Wikilinks:** use full **vault-relative paths** (e.g. `[[folder/subfolder/page-name]]`),
   not bare basenames — some basenames are not globally unique.
@@ -52,13 +53,16 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   folder path (or an ancestor of it). `wiki-lint.py` enforces this (`category_folder_mismatch`),
   because a category that does not mirror the folder silently hides the page from that
   folder's base-backed index.
-- **Underscore-prefixed paths (`_*`) are not wiki content.** Any top-level (or nested) dir
-  whose name starts with `_` — e.g. `_raw` (ingest staging), `_bin` (tooling), `_archive-emails`
-  (a source archive) — is infrastructure/staging, not council content. The wiki scripts skip
-  both dotdirs (`.`) and `_`-dirs when walking the vault (`validate-frontmatter.py`,
-  `regen-manifest.py`, `wiki-graph.py`), so files there need no frontmatter and never appear
-  in indexes or the graph. Put scratch, source archives, and runnable tools under a `_`-dir.
-- **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages. **Don't hand-append to `log.md` or `hot.md`** — the `wiki-journal.py` script owns the timestamped `log.md` line, the `hot.md` Recent-Activity prepend/trim, and the `updated:` bump; a skill passes it only the distilled one-line entry. `hot.md` is the vault-root ~500-word recent-activity cache (a `## Recent Activity` list plus hand-curated `## Active Threads` / `## Key Takeaways` / `## Flagged Contradictions`): read it for fast context, and edit its semantic sections by hand.
+- **What counts as a page.** Every script and the hook share one rule: a `.md` file is a
+  page unless a path component starts with `.` or `_`, it sits under a top-level
+  `templates/` (Obsidian templates), it is a root `yyyy-MM-dd.md` daily note, or it is
+  scaffolding (`index.md`, `log.md`, `hot.md`, `README.md`, `CLAUDE.md`, `AGENTS.md`). So a
+  `_`-dir (`_raw` staging, `_sources` snapshots, `_bin` tools, a mail archive) needs no
+  frontmatter and never appears in indexes, lint or the graph: put scratch, source archives
+  and runnable tools there.
+- **Keep `index.md` and `log.md` in sync** when adding, renaming, or removing pages. **Don't hand-append to `log.md` or `hot.md`** — the `wiki-journal.py` script owns the timestamped `log.md` line, the `hot.md` Recent-Activity prepend/trim, and the `updated:` bump; a skill passes it only the distilled one-line entry. `hot.md` is the vault-root recent-activity cache (budget ~600 words; lint flags `hot_size` past it) (a `## Recent Activity` list plus hand-curated `## Active Threads` / `## Key Takeaways` / `## Flagged Contradictions`): read it for fast context, and edit its semantic sections by hand. No session-scoped sections ("installed this session", "today's work"): that is what `log.md` and git are for.
+  CLI (no `--help` needed): `uv run .claude/wiki-scripts/wiki-journal.py --log 'OP k=v: gist [[page]]' [--hot-trim 3]` (add `--no-hot` for read-only runs such as a lint).
+  `--log` is one line of at most 240 chars (put detail on the page) and is also prepended to hot.md unless `--hot-entry TEXT` or `--no-hot` is given; log.md rotates itself into `_archives/` past 50 KB.
 - **Folder indexes can be base-backed** (Obsidian Bases). A folder's `index.md` can describe the
   category (a one-line `summary:` in its frontmatter) and list its pages with a live **base**
   block instead of a hand-maintained bullet list, so adding or renaming a page needs no index
@@ -83,27 +87,28 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   score. Don't reintroduce numeric scoring into pages.
 - **Indexes respect privacy scope — no upward leak.** A page's title/summary may only appear in
   an `index.md` within its *own* privacy scope. If a vault designates **private areas** (declared
-  as `private_paths` in `.manifest.json` — path prefixes like `me` or `context/me`), then each
+  as `private_paths` in `.manifest.json`, the vault marker's only config — path prefixes like
+  `me` or `context/me`), then each
   private area keeps its **own second-level `index.md`** cataloguing its pages, and any more-public
   index (the shareable root, or an index in another area) references that area only by a **single
   link to its section `index.md`** with a generic label — never by listing the private pages or
   their summaries. Rule of thumb: *a summary travels only as far up as its own privacy scope.*
-  `wiki-lint.py` enforces this (`index_privacy_leak`); the key is preserved across
-  `regen-manifest.py` runs. Vaults with no `private_paths` are unaffected (the check is a no-op).
+  `wiki-lint.py` enforces this (`index_privacy_leak`); `regen-manifest.py` keeps the key
+  when it repairs the marker. Vaults with no `private_paths` are unaffected (the check is a no-op).
 - **Vault commits are grouped and conventional.** When a vault is git-managed, use
   Conventional Commits (`type(scope): subject`) and group each commit around changes that
-  belong together — an ingest batch plus its manifest/log resync is one commit; an unrelated
+  belong together — an ingest batch plus its journal entry is one commit; an unrelated
   mechanical sweep is another. Be reasonable about granularity: neither a catch-all snapshot
   of everything uncommitted, nor a micro-commit per file or per tiny logical step — a few
-  coherent groups per work session. Unrelated leftovers another session parked in the
-  working tree get their own commit (or get surfaced), not swept into yours.
-  **Batching commits: gate only the last one.** The pre-commit hook re-runs the
-  whole-vault checks (frontmatter + error-level lint) on every commit - ~30s per
-  commit on an OneDrive-mounted vault. Those checks inspect the vault's *current
-  on-disk state*, not the commit's delta, so when landing several commits
-  back-to-back pass `--no-verify` on every commit **except the final one**; the
-  last gated commit validates the identical end state the intermediate gates
-  would have seen. Never skip the gate on a batch's final commit.
+  coherent groups per work session. **Never `git add -A` / `git add .` in a vault:** stage
+  the paths you changed by name (`git add <path> ...`). Files another session left in the
+  working tree are not yours: surface them to the user, never sweep them into your commit.
+  **Commit with `wiki-commit.py`** (plan on stdin: a message line, then its paths indented;
+  `--journal 'LINE'` writes the log entry into the last commit). See `scripts/README.md`.
+  **The pre-commit gate checks only what you stage** (`wiki-lint.py --staged --errors-only`,
+  about two seconds) and stamps `updated:` on staged pages whose content changed, so commit
+  normally and never pass `--no-verify` to save time. It blocks only on error-level findings
+  in the staged pages, or on links a staged deletion or rename breaks elsewhere.
   **Never commit daily notes at all.** A root-level `yyyy-MM-dd.md` is Obsidian daily-note
   scratch, not wiki content: it is journal, it is never linked, it has no frontmatter, and it
   exists on whichever machine happened to open Obsidian that day. Committing it syncs one
@@ -112,7 +117,7 @@ conventions inlined by `sync-agents.py`. Two consequences, whichever agent you a
   "a normal page now", it is stale scratch. Keep them ignored in `.gitignore`
   (`/[0-9][0-9][0-9][0-9]-[0-9][0-9]-[0-9][0-9].md`), and if any are already tracked, untrack
   them with `git rm --cached` so the local files survive. The wiki tools
-  (`validate-frontmatter.py`, `wiki-lint.py`) skip them so an empty one can't block the
+  (`wiki-lint.py` and every other script) skip them so an empty one can't block the
   pre-commit gate. Anything in a daily note worth keeping gets **distilled into a real page**;
   the note itself is then disposable.
 - **Lint suppression is per-page and explicit.** A page that legitimately trips a

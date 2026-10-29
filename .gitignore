@@ -3,3 +3,9 @@ __pycache__/
 .DS_Store
 .env
 .idea
+
+# Per-checkout agent instructions (Claude Code loads it beside CLAUDE.md)
+CLAUDE.local.md
+
+# Agent worktrees (Claude Code)
+.claude/worktrees/

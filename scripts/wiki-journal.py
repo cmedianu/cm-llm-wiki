@@ -21,6 +21,9 @@ Usage
         --log 'INGEST source="..." pages_updated=1 pages_created=0 mode=append' \
         --hot-entry '**Merged the C: cleanup audit...** ...' --hot-trim 10
 
+    # --log alone also prepends the same line to hot.md (pass --no-hot to skip)
+    wiki-journal.py --log 'CAPTURE page=[[some-page]] one-line gist' --hot-trim 10
+
 Notes
 -----
 * `--vault` defaults to the auto-detected vault (walk up from CWD for .manifest.json,
@@ -33,7 +36,13 @@ Notes
 * hot.md is created from a minimal template if missing. log.md is created empty.
 * `--hot-entry` text is the bullet body WITHOUT the leading "- "; a leading
   "- " is stripped if present. Multi-line entries: embed "\n" and the script
-  keeps them as one entry.
+  keeps them as one entry. When omitted, `--log` text is used (unless --no-hot).
+* A `--log` body is one distilled line: over 240 characters is rejected (put
+  the detail on the page and link it). When log.md grows past 50 KB it is
+  rotated automatically: older entries roll into _archives/log-<year>.md (as
+  with --log-trim) and the newest ~25 KB stay.
+* A warning goes to stderr when hot.md (body, excluding frontmatter) exceeds
+  600 words; hot.md is read by every wiki skill, so keep it short.
 * Exit 0 on success; nonzero with a message on malformed input.
 """
 
@@ -48,6 +57,10 @@ from pathlib import Path
 from typing import Optional
 
 RECENT_HEADING = "## Recent Activity"
+LOG_ENTRY_MAX_CHARS = 240           # --log bodies longer than this are rejected
+LOG_ROTATE_BYTES = 50 * 1024        # auto-rotate log.md past this size...
+LOG_ROTATE_KEEP_BYTES = 25 * 1024   # ...keeping roughly this much of the newest entries
+HOT_WARN_WORDS = 600                # warn when hot.md's body exceeds this
 
 
 def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
@@ -121,6 +134,49 @@ updated: {date}
 """
 
 
+Fmt = tuple[str, str]  # (eol, bom) of a file on disk
+_LF: Fmt = ("\n", "")
+
+
+def _read_doc(path: Path) -> tuple[str, Fmt]:
+    """Read a sidecar as (text with LF line ends and no BOM, (eol, bom)).
+
+    Opened with newline="" so a CRLF file (Windows / OneDrive vaults) is
+    detected and written back as CRLF instead of becoming a whole-file diff; a
+    UTF-8 BOM (Notepad, PowerShell Set-Content) is stripped so the frontmatter
+    and headings still match, and restored on write."""
+    try:
+        with path.open(encoding="utf-8", newline="") as f:
+            raw = f.read()
+    except UnicodeDecodeError as e:
+        # Never rewrite a file we cannot round-trip; leave it untouched.
+        raise SystemExit(f"error: {path} is not valid UTF-8 ({e.reason} at byte "
+                         f"{e.start}); re-save it as UTF-8 and re-run. Nothing written.")
+    bom = "\ufeff" if raw.startswith("\ufeff") else ""
+    raw = raw[len(bom):]
+    eol = "\r\n" if "\r\n" in raw else "\n"
+    return raw.replace("\r\n", "\n"), (eol, bom)
+
+
+def _write_doc(path: Path, text: str, fmt: Fmt = _LF) -> None:
+    """Write LF-normalised `text` back with the file's original EOL and BOM."""
+    eol, bom = fmt
+    with path.open("w", encoding="utf-8", newline="") as f:
+        f.write(bom + (text.replace("\n", eol) if eol != "\n" else text))
+
+
+def _tail_eol(path: Path) -> str:
+    """EOL style of an existing file, sniffed from its last 4 KB (O(1))."""
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            f.seek(max(0, f.tell() - 4096))
+            tail = f.read()
+    except OSError:
+        return "\n"
+    return "\r\n" if b"\r\n" in tail else "\n"
+
+
 def _now_local() -> _dt.datetime:
     return _dt.datetime.now().astimezone()
 
@@ -145,21 +201,26 @@ def append_log(vault: Path, body: str, timestamp: str) -> str:
     log_path = vault / "log.md"
     line = f"- [{timestamp}] {body.strip()}"
     prefix = ""
+    eol = "\n"
     if log_path.exists() and log_path.stat().st_size > 0:
+        eol = _tail_eol(log_path)
         with log_path.open("rb") as f:
             f.seek(-1, 2)
             if f.read(1) != b"\n":
-                prefix = "\n"
-    with log_path.open("a", encoding="utf-8") as f:
-        f.write(prefix + line + "\n")
+                prefix = eol
+    with log_path.open("a", encoding="utf-8", newline="") as f:
+        f.write(prefix + line.replace("\n", eol) + eol)
     return line
 
 
 _ENTRY_RE = re.compile(r"^- \[(\d{4})-\d{2}-\d{2}")
 
 
-def trim_log(vault: Path, keep: int) -> dict:
+def trim_log(vault: Path, keep: int | None = None, keep_bytes: int | None = None) -> dict:
     """Roll all but the newest `keep` entries into _archives/log-<year>.md.
+
+    With `keep_bytes` instead of `keep`, keep as many of the newest entries as
+    fit in that many bytes (at least one) — the auto-rotation path.
 
     Assumes the canonical log shape: optional frontmatter, then chronological
     (oldest-first) `- [timestamp] ...` entries, each possibly multi-line.
@@ -167,7 +228,8 @@ def trim_log(vault: Path, keep: int) -> dict:
     log_path = vault / "log.md"
     if not log_path.exists():
         return {"rolled": 0, "kept": 0}
-    lines = log_path.read_text(encoding="utf-8").split("\n")
+    text, fmt = _read_doc(log_path)
+    lines = text.split("\n")
 
     head: list[str] = []
     i = 0
@@ -192,6 +254,16 @@ def trim_log(vault: Path, keep: int) -> dict:
     if cur is not None:
         entries.append(cur)
 
+    if keep is None:
+        budget = keep_bytes or 0
+        keep, used = 0, 0
+        for e in reversed(entries):
+            size = len("\n".join(e).encode("utf-8")) + 1
+            if keep and used + size > budget:
+                break
+            used += size
+            keep += 1
+
     if len(entries) <= keep:
         return {"rolled": 0, "kept": len(entries)}
 
@@ -208,13 +280,16 @@ def trim_log(vault: Path, keep: int) -> dict:
         by_year.setdefault(year, []).extend(e)
     for year, body_lines in by_year.items():
         dest = archive_dir / f"log-{year}.md"
-        prev = dest.read_text(encoding="utf-8") if dest.exists() else f"# Wiki log archive — {year}\n"
+        if dest.exists():
+            prev, dest_fmt = _read_doc(dest)
+        else:
+            prev, dest_fmt = f"# Wiki log archive — {year}\n", (fmt[0], "")
         if not prev.endswith("\n"):
             prev += "\n"
-        dest.write_text(prev + "\n".join(body_lines) + "\n", encoding="utf-8")
+        _write_doc(dest, prev + "\n".join(body_lines).rstrip("\n") + "\n", dest_fmt)
     out = head + [""] if head else []
     out += [ln for e in kept for ln in e]
-    log_path.write_text("\n".join(out) + "\n", encoding="utf-8")
+    _write_doc(log_path, "\n".join(out).rstrip("\n") + "\n", fmt)
     return {"rolled": len(roll), "kept": len(kept), "years": sorted(by_year)}
 
 
@@ -257,11 +332,25 @@ def _split_recent_entries(block: list[str]) -> tuple[list[str], list[list[str]]]
     return preamble, entries
 
 
+def hot_word_count(vault: Path) -> int:
+    """Words in hot.md's body (frontmatter excluded); 0 if missing/unreadable."""
+    try:
+        text, _ = _read_doc(vault / "hot.md")
+    except (OSError, SystemExit):
+        return 0
+    if text.startswith("---\n"):
+        end = text.find("\n---", 4)
+        if end != -1:
+            text = text[end + 4:]
+    return len(text.split())
+
+
 def update_hot(vault: Path, entry: str | None, date: str, trim: int | None) -> dict:
     hot_path = vault / "hot.md"
     if not hot_path.exists():
         hot_path.write_text(HOT_TEMPLATE.format(date=date), encoding="utf-8")
-    lines = hot_path.read_text(encoding="utf-8").split("\n")
+    text, fmt = _read_doc(hot_path)
+    lines = text.split("\n")
 
     # locate Recent Activity block
     try:
@@ -300,7 +389,7 @@ def update_hot(vault: Path, entry: str | None, date: str, trim: int | None) -> d
     lines = lines[: start + 1] + new_block + lines[end:]
     bumped = _bump_updated(lines, date)
 
-    hot_path.write_text("\n".join(lines), encoding="utf-8")
+    _write_doc(hot_path, "\n".join(lines), fmt)
     return {"added": added, "trimmed": trimmed, "bumped": bumped, "count": len(entries)}
 
 
@@ -308,7 +397,8 @@ def main() -> int:
     ap = argparse.ArgumentParser(description="Mechanical log.md / hot.md updater.")
     ap.add_argument("--vault", default=None, help="vault root (default: auto-detected via .manifest.json walk-up / projects.json)")
     ap.add_argument("--log", metavar="BODY", help='log line body after the timestamp, e.g. \'INGEST source="..." ...\'')
-    ap.add_argument("--hot-entry", metavar="TEXT", help="Recent Activity bullet body (no leading '- ')")
+    ap.add_argument("--hot-entry", metavar="TEXT", help="Recent Activity bullet body (no leading '- '); defaults to the --log text")
+    ap.add_argument("--no-hot", action="store_true", help="with --log, do not also prepend it to hot.md")
     ap.add_argument("--hot-trim", type=int, metavar="N", help="keep only the newest N Recent Activity entries")
     ap.add_argument("--log-trim", type=int, metavar="N", help="keep only the newest N log entries; roll older ones into _archives/log-<year>.md")
     ap.add_argument("--date", help="override today's date (YYYY-MM-DD) for hot.md updated:")
@@ -320,6 +410,20 @@ def main() -> int:
         ap.error("nothing to do: pass --log, --hot-entry, --log-trim, and/or --hot-trim")
     if args.log_trim is not None and args.log_trim < 0:
         ap.error("--log-trim must be >= 0")
+    if args.log:
+        n = len(args.log.strip())
+        if n > LOG_ENTRY_MAX_CHARS:
+            print(
+                f"error: --log entry is {n} chars; the limit is {LOG_ENTRY_MAX_CHARS}. "
+                "log.md takes ONE distilled line (verb + key facts), not a paragraph. "
+                "Put the detail on the wiki page itself and reference it, e.g. "
+                "--log 'CAPTURE page=[[some-page]] one-line gist'. Nothing written.",
+                file=sys.stderr,
+            )
+            return 2
+    hot_entry = args.hot_entry
+    if hot_entry is None and args.log and not args.no_hot:
+        hot_entry = args.log
 
     vault = resolve_vault(args.vault)
 
@@ -334,9 +438,13 @@ def main() -> int:
             out.append(f"log.md — rolled {res['rolled']} entries into _archives/log-{{{','.join(res['years'])}}}.md, kept {res['kept']}")
         else:
             out.append(f"log.md — nothing to roll ({res['kept']} entries <= {args.log_trim})")
+    elif args.log and (vault / "log.md").stat().st_size > LOG_ROTATE_BYTES:
+        res = trim_log(vault, keep_bytes=LOG_ROTATE_KEEP_BYTES)
+        if res["rolled"]:
+            out.append(f"log.md — over {LOG_ROTATE_BYTES // 1024} KB: auto-rotated {res['rolled']} entries into _archives/log-{{{','.join(res['years'])}}}.md, kept {res['kept']}")
 
-    if args.hot_entry is not None or args.hot_trim is not None:
-        res = update_hot(vault, args.hot_entry, _today(args.date), args.hot_trim)
+    if hot_entry is not None or args.hot_trim is not None:
+        res = update_hot(vault, hot_entry, _today(args.date), args.hot_trim)
         bits = []
         if res["added"]:
             bits.append("entry prepended")
@@ -345,10 +453,55 @@ def main() -> int:
         bits.append(f"{res['count']} entries")
         bits.append("updated: bumped" if res["bumped"] else "updated: already current")
         out.append("hot.md — " + ", ".join(bits))
+        words = hot_word_count(vault)
+        if words > HOT_WARN_WORDS:
+            print(
+                f"warning: hot.md is {words} words (> {HOT_WARN_WORDS}); every wiki skill "
+                "reads it. Trim it: pass --hot-trim N, drop session-scoped sections and "
+                "stale threads, keep only what the next session needs.",
+                file=sys.stderr,
+            )
 
     print("\n".join(out))
     return 0
 
 
+# --- run log (copied verbatim into every script, like resolve_vault) ---------
+# One TSV line per run in ~/.obsidian-wiki/runs.tsv: when, script, cwd, seconds,
+# exit code, args, and any RUN_STATS the script filled in. Machine-local, never
+# inside a vault; `claude-history.py runs` summarizes it. WIKI_RUNLOG=0 disables.
+# Never raises: logging must not break the tool.
+RUN_STATS: dict = {}
+
+
+def log_run(t0: float, rc) -> None:
+    import os as _os, sys as _sys, time as _time
+    from datetime import datetime as _dt
+    if _os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = __import__("pathlib").Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        fields = [_dt.now().isoformat(timespec="seconds"),
+                  __import__("pathlib").Path(_sys.argv[0]).name, _os.getcwd(),
+                  f"{_time.monotonic() - t0:.2f}", str(rc), " ".join(_sys.argv[1:])[:300],
+                  " ".join(f"{k}={v}" for k, v in RUN_STATS.items())]
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write("\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
+    except Exception:
+        pass
+# --- end run log -------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    import time as _time
+    _t0, _rc = _time.monotonic(), 1
+    try:
+        _rc = main()
+        _rc = 0 if _rc is None else _rc
+    except SystemExit as _e:
+        _rc = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+        raise
+    finally:
+        log_run(_t0, _rc)
+    sys.exit(_rc)

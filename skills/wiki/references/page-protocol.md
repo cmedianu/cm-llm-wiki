@@ -1,8 +1,10 @@
 # Page-Writing Protocol
 
-Everything a write-side skill (`wiki-ingest`, `wiki-capture`, `wiki-research`, `wiki-link` synthesis, `wiki-compact` rewrites) needs to produce a valid page. Read this instead of the full `wiki/SKILL.md` theory skill. Category, `index.md` membership, and page inventory are always **discovered from disk / the manifest**, never assumed.
+Everything a write-side skill (`wiki-ingest`, `wiki-capture`, `wiki-compact` rewrites and synthesis) needs to produce a valid page. Read this instead of the full `wiki/SKILL.md` theory skill. Category, `index.md` membership, and page inventory are always **discovered from disk**, never assumed.
 
 ## Page Template
+
+**Create a new page with the scaffold, not by hand:** `uv run .claude/wiki-scripts/wiki-new.py <category>/<slug> --title "..." --summary "..." --tags a,b [--supersedes <old-snapshot>] --body-file - <<'MD' ... MD`. It checks the name and folder, writes valid date-only frontmatter, and wires supersession. Edit existing pages normally. The template below is what it produces.
 
 ```markdown
 ---
@@ -11,8 +13,8 @@ category: ai
 tags: [ml, architecture]
 summary: One or two sentences, ≤200 chars — what is this page about?
 sources: [papers/attention.pdf]
-created: 2024-03-15T10:30:00Z
-updated: 2024-03-15T10:30:00Z
+created: 2024-03-15
+updated: 2024-03-15
 ---
 
 # Page Title
@@ -32,16 +34,16 @@ Use [[wikilinks]] to connect to related pages.
 - [[references/attention-is-all-you-need]] — Original paper
 ```
 
-**Required frontmatter:** `title`, `category`, `tags`, `summary`, `sources`, `created`, `updated`. `category` **equals the page's folder, discovered from disk** — never an assumed taxonomy.
+**Required frontmatter:** `title`, `category`, `tags`, `summary`, `created`, `updated` (dates are `yyyy-MM-dd`, never ISO datetimes). `sources` is optional — set it whenever the page distils a source; self-authored pages may omit it. `category` **equals the page's folder, discovered from disk** — never an assumed taxonomy.
 
 **Optional frontmatter** (ingest skills may populate; hand-authored pages can omit):
 
 - `aliases:` — alternate names this page should also resolve as.
 - `lifecycle:` — `draft` / `reviewed` / `living` / `archived`. **Ingest-class skills set `lifecycle: draft` + `lifecycle_changed: <today>`.** Only a human promotes lifecycle, and it is left unchanged on update. `living` = intentionally never-finished pages; `archived` = retired/superseded (pairs with `superseded_by`).
 
-## Summary — the <200-char hard rule
+## Summary
 
-`summary:` is 1–2 sentences, **hard limit under 200 characters** — count before writing; `wiki-lint` fails a page at 200+. It powers `wiki-query`'s cheap retrieval, so rewrite it whenever a page's meaning shifts.
+`summary:` is 1–2 short sentences, under 200 characters — don't count by hand; `wiki-lint` flags a longer one and you shorten it then. It powers `wiki-query`'s cheap retrieval, so rewrite it whenever a page's meaning shifts.
 
 ## Provenance markers
 
@@ -65,7 +67,7 @@ Every claim carries one of three states. Mark them inline so a reader (or anothe
 
 Obsidian **wikilinks** with full vault-relative paths: `[[path/to/page]]` or `[[path/to/page|display]]`. Always use vault-relative paths, not bare basenames — some basenames aren't globally unique.
 
-**Link each new page to at least two existing pages.** Run `wiki-link` / `wiki-lint` to find and fix broken or missing links.
+**Link each new page to at least two existing pages.** Then run the back-link pass (`ingest-prep.py --backlinks-for <pages>`, judged as in `wiki-ingest` Step 6).
 
 ## Privacy digest
 
@@ -76,23 +78,17 @@ Apply before surfacing a page anywhere more public than itself. Both mechanisms 
 
 Rule of thumb: *a title or summary travels only as far up as its own privacy scope.*
 
-## Journal + manifest — never hand-edit
+## Check and journal — never hand-edit
 
-After writing pages, resync the manifest and record the change with the scripts — never hand-write `.manifest.json`, `log.md`, or `hot.md`.
+Check only what you wrote, if a check is warranted: `uv run .claude/wiki-scripts/wiki-lint.py --pages <pages you wrote> --summary`. Otherwise rely on the pre-commit gate (lints staged pages, stamps `updated:`); never pass `--no-verify`.
 
-**Manifest** — `regen-manifest.py` resyncs from disk (preserves `ingested_at` and `private_paths`):
+Never hand-write `log.md`, `hot.md` or `.manifest.json`, and don't run `regen-manifest.py` after writing (it only creates or repairs the vault marker).
 
-```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py" --vault "$OBSIDIAN_VAULT_PATH"
-```
-
-**Journal** — `wiki-journal.py` owns the timestamped `log.md` append, the `hot.md` Recent-Activity prepend/trim, and the `updated:` bump. You compose only the distilled one-line entries:
+**Journal** — one `--log` line (≤240 chars) naming the *conceptual* change, not a file list; `wiki-journal.py` timestamps it in `log.md` and prepends it to `hot.md`:
 
 ```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-  --log 'INGEST source="path/to/source" pages_updated=N pages_created=M mode=append' \
-  --hot-entry '**One-line conceptual change.** Detail with [[full/path/wikilinks]].' \
-  --hot-trim 3
+uv run .claude/wiki-scripts/wiki-journal.py --hot-trim 3 \
+  --log 'INGEST source="path/to/source" created=M updated=N: one-line change, [[full/path/wikilinks]]'
 ```
 
 `hot.md`'s **Key Takeaways / Active Threads / Flagged Contradictions** are semantic — the script never touches them. Edit those by hand with Edit if a write materially shifted one.

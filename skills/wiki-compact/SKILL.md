@@ -4,14 +4,15 @@ description: >
   Shrink and consolidate the Obsidian wiki: merge duplicate pages, archive stale content, retire dead
   pages or whole sub-areas out of the wiki to _archives/, distil raw dumps, rotate the log. The fixer
   for wiki-lint findings, and handles full archive-and-rebuild or restore. Counterpart to wiki-ingest —
-  removes and consolidates, never adds.
+  removes and consolidates. Also consolidates upward with synthesis pages: "synthesize my wiki", "find
+  connections", "what concepts keep coming up together".
 ---
 
 # Wiki Compact — Prune, Merge, Archive
 
-You are reducing the wiki's weight without losing knowledge. Growth skills (ingest, capture, research) only ever add; this skill is the counterweight: it merges what drifted apart, retires what stopped being true, and keeps the always-growing files bounded. Every byte a future agent doesn't have to read is the win.
+You are reducing the wiki's weight without losing knowledge. Growth skills (ingest, capture) only ever add; this skill is the counterweight: it merges what drifted apart, retires what stopped being true, and keeps the always-growing files bounded. Every byte a future agent doesn't have to read is the win.
 
-**This skill deletes and rewrites. Confirm the plan with the user before executing it** (Step 2 to Step 3 gate). Steps 1 to 5 are the **scalpel**: targeted merges, archives, and log rolls. For the **nuclear** cases (archive the whole wiki, rebuild from scratch, restore a previous archive) use **Rebuild Mode** at the end; it is the heavy hammer, always gated on explicit user confirmation.
+**This skill deletes and rewrites. Confirm the plan with the user before executing it** (Step 2 to Step 3 gate). Steps 1 to 5 are the **scalpel**: targeted merges, archives, and log rolls. For the **nuclear** cases (archive the whole wiki, rebuild from scratch, restore a previous archive) use **Rebuild Mode** at the end; it is the heavy hammer, always gated on explicit user confirmation. To consolidate *upward* (a synthesis page joining concepts that keep co-occurring), follow `references/synthesis.md`.
 
 ## Before You Start
 
@@ -20,7 +21,12 @@ You are reducing the wiki's weight without losing knowledge. Growth skills (inge
    ```bash
    uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-lint.py" --format json
    ```
-3. Read `hot.md` if it exists — don't compact something the user is actively working in.
+3. Run `ingest-prep.py` once for the categories, `private_paths` and `index_status` per folder (`--source` needs no real file; ignore `source_status`). Don't re-derive them by hand:
+   ```bash
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/ingest-prep.py" --vault "$OBSIDIAN_VAULT_PATH" \
+     --source none
+   ```
+4. Read `hot.md` if it exists — don't compact something the user is actively working in.
 
 ## Step 1: Build the Compaction Queue
 
@@ -53,7 +59,7 @@ Rules of the road:
 
 - **Never delete knowledge.** Deletion is only for genuinely empty/junk files; everything else merges, archives, or moves to `_sources/`. When merging, every fact that exists only in the losing page must land in the surviving page.
 - **Keep event records.** Dated pages that record events (a scan report, a meeting, a completed trip) are history, not staleness — archive only if the user agrees they're done being referenced.
-- **Respect privacy scope** per `## Privacy & Visibility` in `wiki/SKILL.md` — a merge must never move private-area content to a more public path.
+- **Respect privacy scope** per the Privacy digest in `wiki/references/page-protocol.md` — a merge must never move private-area content to a more public path.
 - **Don't touch `_`-dirs** (`_sources/`, `_archives/`, `_raw/`) except to move things *into* them.
 
 **Show the plan and wait for the user's go-ahead.** They may pull items; execute only what survives.
@@ -63,8 +69,8 @@ Rules of the road:
 For each approved action, in this order (merges first, so splits/archives see the merged state):
 
 1. Apply the content change per the Page-Writing Protocol in `wiki/references/page-protocol.md` (full-path wikilinks, summary under 200 chars on any page you rewrite).
-2. Rewire inbound links: grep the vault for wikilinks to any page you merged away or moved, and repoint them at the survivor (skip `log.md` — historical entries stay verbatim). Links to **retired** pages become plain-text archive pointers (`` `_archives/<topic>/page.md` ``), not wikilinks — a live page must never wikilink into a `_`-dir. Links *inside* retired pages are left as-is: the archive is a frozen snapshot outside wiki scope, and stale interlinks there are expected.
-3. Curated `index.md` files: remove or repoint lines for archived/merged pages (base-backed indexes need no edit).
+2. Rewire inbound links: for a **moved or renamed** page run `uv run .claude/wiki-scripts/wiki-mv.py OLD NEW` (preview), then again with `--apply`; it repoints every link and updates `category:`. For a page **merged** into an existing one, grep for its wikilinks and repoint them at the survivor (skip `log.md` — historical entries stay verbatim). Links to **retired** pages become plain-text archive pointers (`` `_archives/<topic>/page.md` ``), not wikilinks — a live page must never wikilink into a `_`-dir. Links *inside* retired pages are left as-is: the archive is a frozen snapshot outside wiki scope, and stale interlinks there are expected.
+3. Curated `index.md` files: remove or repoint lines for archived/merged pages (indexes whose `index_status` is `base_backed` or `hybrid` need no edit).
 
 ## Step 4: Roll the Log
 
@@ -78,16 +84,14 @@ The script owns the mechanics (year-split archive files, frontmatter preserved).
 
 ## Step 5: Verify and Record
 
-1. Resync the manifest, then lint — expect the queue findings you fixed to be gone and **zero new errors**:
+1. Lint — expect the queue findings you fixed to be gone and **zero new errors**:
    ```bash
-   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py"
-   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-lint.py" --format md
+   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-lint.py" --summary
    ```
 2. Record the operation:
    ```bash
-   uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-     --log 'COMPACT merged=N archived=M retired=R distilled=K log_rolled=Y' \
-     --hot-entry '**Compacted the wiki.** Merged <what>, archived <what>, rolled the log.' --hot-trim 3
+   uv run .claude/wiki-scripts/wiki-journal.py --hot-trim 3 \
+     --log 'COMPACT merged=N archived=M retired=R distilled=K: merged <what>, archived <what>'
    ```
 3. Report to the user: what shrank, what moved where, and any candidate you recommend revisiting next time.
 
@@ -97,7 +101,7 @@ The script owns the mechanics (year-split archive files, frontmatter preserved).
 - [ ] No inbound wikilink left pointing at a merged-away or retired path (grep to confirm)
 - [ ] Retired sub-area's durable pages kept behind (promoted, `category:` matching the new folder); emptied directory removed
 - [ ] Raw originals parked in `_sources/`, not deleted
-- [ ] Manifest resynced via `regen-manifest.py`; lint shows no new errors
+- [ ] Lint shows no new errors
 - [ ] Operation journaled via `wiki-journal.py`
 
 ---
@@ -116,15 +120,11 @@ Archives live at `$OBSIDIAN_VAULT_PATH/_archives/<YYYY-MM-DDTHH-MM-SSZ>/`. Each 
 wiki state: every top-level **content** folder (all top-level dirs except `_*` and `.*`, discovered from
 disk), plus `index.md`, `log.md`, `hot.md`, `.manifest.json`, and an `archive-meta.json`:
 
-```json
-{ "archived_at": "2026-04-06T10:30:00Z", "reason": "rebuild|snapshot|pre-restore",
-  "total_pages": 87, "total_sources": 42, "vault_path": "...", "manifest_snapshot": ".manifest.json" }
-```
+`{ "archived_at": "2026-04-06T10:30:00Z", "reason": "rebuild|snapshot|pre-restore", "total_pages": 87 }`
 
-**Manifest repair first.** If the manifest merely drifted from the filesystem (an Obsidian-side rename,
-a manual `mv`, a restore from backup), do **not** rebuild; run `regen-manifest.py` from the vault root
-(`DRY_RUN=1` previews). It rewrites the manifest from disk while preserving `ingested_at`. That is the
-cheap repair; rebuild is the expensive one.
+**Not a rebuild case:** a missing or corrupt `.manifest.json` (scripts say "No vault found") is fixed by
+`regen-manifest.py --vault <root>`, which recreates the marker and keeps `private_paths`; links broken by
+renames outside the tooling are a `wiki-lint` fix.
 
 ### Sub-mode 1: Archive only
 
@@ -139,20 +139,18 @@ pages. Current wiki is untouched."
 1. **Archive** current state exactly as sub-mode 1, but reason `"rebuild"`.
 2. **Clear the live wiki:** remove every top-level content folder (discovered from disk). **Keep**
    `_archives/`, `.obsidian/` (Obsidian config), and `.claude/` (skills/scripts/conventions symlinks).
-   Reset `index.md` to the empty template; reset `log.md`/`hot.md` to just the rebuild entry; delete
-   `.manifest.json` (recreated during ingest).
-3. **Hand back to the user:** tell them the vault is cleared and ready for a full re-ingest via
-   `wiki-status` (all sources show as new) then `wiki-ingest` (documents, and Claude-history mode).
+   Reset `index.md` to the empty template and `log.md`/`hot.md` to just the rebuild entry. **Keep**
+   `.manifest.json` (the vault marker) and `_sources/`.
+3. **Hand back to the user:** the vault is ready for a re-ingest with `wiki-ingest` in **Full Mode**
+   (every `_sources/` snapshot still reads `unchanged`).
    **Don't auto-run the ingest;** the user chooses what to re-ingest and in what order, and some sources
    may no longer be relevant.
-4. **Journal** (a rebuild is a major state change, so stamp `hot.md` too):
-   `--log '<REBUILD archived_to="_archives/<timestamp>" previous_pages=N>'`
-   `--hot-entry '**Wiki rebuilt from scratch.** Prior state archived to \`_archives/<timestamp>\`.' --hot-trim 3`.
+4. **Journal:** `--log 'REBUILD archived_to="_archives/<timestamp>" previous_pages=N' --hot-trim 3`.
 
 ### Sub-mode 3: Restore from archive
 
-1. **List archives:** read each `_archives/*/archive-meta.json` and present a Date / Reason / Pages /
-   Sources table.
+1. **List archives:** read each `_archives/*/archive-meta.json` and present a Date / Reason / Pages
+   table.
 2. **Confirm** which archive; warn that restoring overwrites the current live wiki.
 3. **Archive the current state first** (reason `"pre-restore"`) so nothing is lost.
 4. **Restore:** clear the live wiki (as sub-mode 2 step 2), copy the chosen archive's content back into

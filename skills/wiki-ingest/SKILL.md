@@ -2,15 +2,14 @@
 name: wiki-ingest
 description: >
   Ingest documents into the Obsidian wiki by distilling their knowledge into interconnected wiki pages.
-  Use this skill whenever the user wants to add new sources to their wiki, process a document or directory,
-  import articles, papers, or notes into their knowledge base, or says things like "add this to the wiki",
-  "process these docs", "ingest this folder". Also triggers when the user drops a file and wants it
-  incorporated into their existing knowledge base. Also handles raw mode: "process my drafts", "promote
-  my raw pages", or any reference to the _raw/ staging directory. Also mines Claude Code conversation
-  history: "process my Claude history", "add my conversations to the wiki", "what have I discussed with
-  Claude before", "import my ~/.claude folder", "extract insights from previous coding sessions", or any
-  mention of the .claude folder, Claude projects, session data, past conversation logs, local-agent-mode
-  sessions, or audit logs.
+  Use whenever the user wants to add sources to their wiki, process a document or directory, import
+  articles, papers, or notes, or says "add this to the wiki", "process these docs", "ingest this folder",
+  or drops a file to incorporate. Raw mode: "process my drafts", "promote my raw pages", the _raw/
+  staging directory. Claude-history mode: "process my Claude history", "add my conversations to the
+  wiki", "what have I discussed with Claude before", "import my ~/.claude folder", "extract insights from
+  previous coding sessions", or any mention of the .claude folder, Claude projects, session data, past
+  conversation logs, local-agent-mode sessions, or audit logs. Also runs the back-link pass on its own:
+  "find missing links", "link my pages", "cross-reference", "connect my wiki", "orphan pages".
 ---
 
 # Obsidian Ingest — Document Distillation
@@ -21,14 +20,14 @@ You are ingesting source documents into an Obsidian wiki. Your job is not to sum
 
 1. **Skim the source first** (cheap — title + first lines). Knowing what it's *about* lets you propose a vault and a target category together, informed by content, instead of asking about the vault in the abstract and the category later.
 2. **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root. **When resolution falls through to the interactive quiz, propose the vault AND the target category in one question**, informed by the skim — e.g. "personal vault → `sysadmin/`, alongside related pages X, Y — ok?" — rather than asking about the vault abstractly now and the category later.
-3. **Run `ingest-prep.py` once** for read-only prep (categories discovered from disk, `private_paths`, this source's `manifest_status` = new|modified|unchanged, `index_base_backed` per category, and `related_pages` matching the keywords):
+3. **Run `ingest-prep.py` once** for read-only prep (categories discovered from disk, `private_paths`, this source's `source_status` = new|modified|unchanged, `index_status` per folder, and `related_pages` matching the keywords):
 
    ```bash
    uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/ingest-prep.py" --vault "$OBSIDIAN_VAULT_PATH" \
      --source <file> --keywords "kw1,kw2"
    ```
 
-   This replaces manually reading `.manifest.json`, globbing for the page inventory, and scanning frontmatter. Derive the keywords from your skim.
+   This replaces globbing for the page inventory, and scanning frontmatter. Derive the keywords from your skim.
 4. Read the tail of `log.md` (last ~20 lines), or `hot.md`, for recent activity — `log.md` is append-only and unbounded, so never read it whole.
 
 When writing internal links in Step 5, apply the link format described in `wiki/references/page-protocol.md` (Link format) using vault-relative wikilinks.
@@ -50,18 +49,13 @@ This applies to all ingest modes and all source formats.
 This skill supports three modes. Ask the user or infer from context:
 
 ### Append Mode (default)
-Only ingest sources that are **new or modified** since last ingest. Delta comes from the manifest entry (keyed by `source_path`), comparing the file's current `size_bytes` and `mtime`:
-
-- If a source path is not in `.manifest.json` → it's **new**, ingest it
-- If it is in `.manifest.json` but its current `size_bytes` **or** `mtime` differs from the recorded entry → it's **modified**, re-ingest it
-- Otherwise → unchanged, **skip it**
+Only ingest sources that are **new or modified**. The prep JSON's `source_status` decides (older scripts call it `manifest_status`): `unchanged` = an identical `_sources/` snapshot exists, skip; `modified` = the snapshot differs, merge into the pages it produced rather than duplicating; `new` = no snapshot and no page whose filename matches. For a whole archive, `ingest-prep.py --sources-dir _sources --since <date>` lists what arrived since the last log entry.
 
 This is the right choice most of the time — it's fast and avoids redundant work.
 
 ### Full Mode
-Ingest everything regardless of manifest state. Use when:
+Ingest everything regardless of `source_status`. Use when:
 - The user explicitly asks for a full ingest
-- The manifest is missing or corrupted
 - After a `wiki-compact` rebuild (Rebuild Mode) has cleared the vault
 
 ### Raw Mode
@@ -74,7 +68,7 @@ In raw mode, each file in `$OBSIDIAN_VAULT_PATH/_raw/` is treated as a source. A
 **Deletion safety:** Only delete the specific file that was just promoted. Before deleting, verify the resolved path is inside `$OBSIDIAN_VAULT_PATH/_raw/` — never delete files outside this directory. Never use wildcards or recursive deletion (`rm -rf`, `rm *`). Delete one file at a time by its exact path.
 
 ### Claude History Mode
-Mine the user's past Claude Code conversations as sources instead of document files. Triggers: "process my Claude history", "add my conversations to the wiki", or any reference to their `~/.claude` folder, Claude projects, session data, or local-agent-mode/audit logs. This mode has its own survey/prefilter/clustering flow — **read `references/claude-history-mode.md` before proceeding**. It still supports the append/full delta logic above (keyed on each conversation JSONL / memory file's `size_bytes` + `mtime`).
+Mine the user's past Claude Code conversations as sources instead of document files. Triggers: "process my Claude history", "add my conversations to the wiki", or any reference to their `~/.claude` folder, Claude projects, session data, or local-agent-mode/audit logs. This mode has its own survey/prefilter/clustering flow — **read `references/claude-history-mode.md` before proceeding**. Append mode there means sessions since the last history ingest (`claude-history.py sessions --since`).
 
 ## Ingest Depth (orthogonal to mode)
 
@@ -109,7 +103,7 @@ unsure and the source is large or important, ask which depth.
 
 ### Step 1: Read the Source
 
-Read the document(s) the user wants to ingest. In append mode, skip files the manifest says are already ingested and unchanged. Supported formats:
+Read the document(s) the user wants to ingest. In append mode, skip sources whose `source_status` is `unchanged`. Supported formats:
 - Markdown (`.md`) — read directly
 - Text (`.txt`) — read directly
 - PDF (`.pdf`) — use the Read tool with page ranges
@@ -118,7 +112,7 @@ Read the document(s) the user wants to ingest. In append mode, skip files the ma
 
 Note the source path — you'll need it for provenance tracking (see the `_sources` snapshot rule below).
 
-**`_sources` snapshot rule.** If a source file lives **outside** the vault (e.g. a `/tmp` dir or a Downloads folder), copy it into `_sources/` at the vault root and key **both** the manifest and each page's `sources:` frontmatter on the vault-relative snapshot path — **never on the external path, which can vanish**. This extends the URL-snapshot convention (`wiki/SKILL.md` → URL sources) to local files.
+**`_sources` snapshot rule.** If a source file lives **outside** the vault (e.g. a `/tmp` dir or a Downloads folder), copy it into `_sources/` at the vault root and key each page's `sources:` frontmatter on the vault-relative snapshot path — **never on the external path, which can vanish**. This extends the URL-snapshot convention (`wiki/SKILL.md` → URL sources) to local files.
 
 ### Step 2: Extract Knowledge
 
@@ -152,14 +146,14 @@ If the source is not project-specific, put everything in global categories.
 ### Step 4: Plan Updates
 
 Before writing anything, plan which pages to update or create. Don't steer toward a page count — the number is an *emergent result* of two things, not a target: **depth** (how many facts you capture) and **atomicity** (one concept per page). Let the source's density set the count. A count is only a sanity check: one page from a rich source means you under-split; many pages from a thin one means you over-split. For each:
-- Does this page already exist? (Check `.manifest.json` or `glob` + frontmatter grep across `OBSIDIAN_VAULT_PATH` — not `index.md`, which may be a base-backed query)
+- Does this page already exist? (Check the prep JSON's `related_pages` — not `index.md`, which may be a base-backed query)
 - If it exists, what new information does this source add?
 - If it's new, which existing category (discovered by listing the vault's top-level folders, skipping `_*`/`.*`) does it best fit?
 - What `[[wikilinks]]` should connect it to existing pages?
 
 ### Step 5: Write/Update Pages
 
-Write or update each page **per the Page-Writing Protocol in `wiki/references/page-protocol.md`** — that reference owns the frontmatter template, the `summary:` <200-char rule, the `lifecycle: draft` block, provenance markers, the ≥2-wikilink rule, and the journal/manifest calls. Ingest is an ingest-class skill, so it sets `lifecycle: draft`. The rest of this step is what's specific to *ingest*.
+Create each new page with `wiki-new.py <category>/<slug> --title --summary --tags --sources` (valid frontmatter, `lifecycle: draft`); edit existing pages in place. Follow the **Page-Writing Protocol in `wiki/references/page-protocol.md`** for provenance markers, the ≥2-wikilink rule and the journal call. The rest of this step is ingest-specific.
 
 **Merge, don't append.** When a page already exists, read it first and fold the new information into it — don't tack a new section onto the end. Update `sources` with the new source, and resolve any contradiction between old and new content (note it inline if unresolvable).
 
@@ -172,39 +166,29 @@ Write or update each page **per the Page-Writing Protocol in `wiki/references/pa
 
 `visibility/` tags are system tags and do **not** count toward the 5-tag limit. When in doubt, omit — untagged pages are treated as public. Never add a visibility tag just because a topic sounds technical.
 
-**Respect privacy scope** per **Privacy & Visibility** in `wiki/SKILL.md`. Read `private_paths` from `.manifest.json`: a page filed under a private area must never have its title or summary surfaced in a more-public `index.md`, and a synthesis page drawing on private sources is itself private-scoped.
+**Respect privacy scope** per the Privacy digest in `wiki/references/page-protocol.md`. Take `private_paths` from the prep JSON: a page filed under a private area must never have its title or summary surfaced in a more-public `index.md`, and a synthesis page drawing on private sources is itself private-scoped.
 
-### Step 6: Update Cross-References
+### Step 6: Back-link Pass
 
-After writing pages, run `ingest-prep.py` in back-link mode to surface pages that mention a new page's title terms but don't yet link to it:
+After writing pages, run `ingest-prep.py` in back-link mode to surface pages that mention a new page's title terms but don't yet link to it (on its own, for "link my pages", pass the pages in scope: recent ones from `hot.md`, or the orphans from `wiki-lint.py --only orphaned_page`):
 
 ```bash
 uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/ingest-prep.py" --vault "$OBSIDIAN_VAULT_PATH" \
   --backlinks-for "cat/page-a.md,cat/page-b.md"
 ```
 
-Review the candidates **with judgment**: add the back-links that genuinely help navigation, skip coincidental term matches. Don't blindly wire every candidate.
+Judge each `{page, candidate, matched_term}` triple from a `grep -n -C 2` snippet, not a full read: link the first natural mention inline (`[[path|text]]`) or add a `## Related` bullet; skip generic-word overlaps (a wrong link is worse than a missing one). Never link inside code or frontmatter, never into `_`-dirs, and never surface a private page on a more-public one.
 
-### Step 7: Update Manifest and Special Files
+### Step 7: Update Index and Journal
 
-**`.manifest.json`** — never hand-write it. After writing pages, run `regen-manifest.py` to resync the manifest from disk (it preserves `ingested_at` and `private_paths`):
+**`index.md`** — per `index_status` in the prep JSON: `base_backed` or `hybrid` needs **no** edit (the base lists new pages from frontmatter; don't add a hand bullet to a hybrid either), only `manual` gets a new line per created page.
 
-```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/regen-manifest.py" --vault "$OBSIDIAN_VAULT_PATH"
-```
-
-**`index.md`** — a base-backed index needs **no** edit (it lists pages live from their frontmatter). Only a hand-curated index gets a new line per created page; check which kind it is before touching it.
-
-**`log.md` and `hot.md`** — don't hand-edit; drive both with one `wiki-journal.py` call
-(see the Page-Writing Protocol in `wiki/references/page-protocol.md`). You compose only the one-line
-Recent-Activity bullet as the *conceptual* change, not a file list — e.g. "Ingested Fowler's
-microservices article — new concept pages on service decomposition, API gateway, bounded contexts":
+**`log.md` and `hot.md`** — don't hand-edit; one `wiki-journal.py --log` line feeds both. Name the
+*conceptual* change, not a file list:
 
 ```bash
-uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-journal.py" --vault "$OBSIDIAN_VAULT_PATH" \
-  --log 'INGEST source="path/to/source" pages_updated=N pages_created=M mode=append' \
-  --hot-entry '**One-line conceptual change.** Detail with [[full/path/wikilinks]].' \
-  --hot-trim 3
+uv run .claude/wiki-scripts/wiki-journal.py --hot-trim 3 \
+  --log 'INGEST source="<path>" created=M updated=N: Fowler microservices; new [[arch/service-decomposition]], [[arch/api-gateway]]'
 ```
 
 **Key Takeaways / Active Threads / Flagged Contradictions are semantic** — the script doesn't
@@ -214,29 +198,25 @@ touch them. If the ingest materially shifted one, edit it yourself with Edit.
 
 When ingesting a directory, process sources one at a time but maintain a running awareness of the full batch. Later sources may strengthen or contradict earlier ones — that's fine, just update pages as you go.
 
-**Fan out when the batch is large.** Independent sources are embarrassingly parallel: for ~4+ unrelated documents, spawn one subagent per source (or per thematic cluster), each doing Steps 1–6 for its slice, then reconcile overlaps, run the cross-reference pass, and do Step 7 (manifest regen + journal) **once at the top level** — parallel writers must never race on `.manifest.json`, `log.md`, or `hot.md`. Keep related sources in the same slice so their pages merge instead of duplicating.
+**Fan out when the batch is large.** Independent sources are embarrassingly parallel: for ~4+ unrelated documents, spawn one subagent per source (or per thematic cluster), each doing Steps 1–6 for its slice, then reconcile overlaps, run the cross-reference pass, and do Step 7 (index + journal) **once at the top level** — parallel writers must never race on `log.md` or `hot.md`. Keep related sources in the same slice so their pages merge instead of duplicating.
 
 ## Quality Checklist
 
 After ingesting, verify:
-- [ ] Every new page has frontmatter with title, category (a discovered folder), tags, sources
+- [ ] Every new page was created with `wiki-new.py`, with `--sources` set
 - [ ] Every new page has at least 2 wikilinks to existing pages
-- [ ] No orphaned pages — per the `## Orphans` definition in `wiki/SKILL.md` (no incoming links from other content pages). Lint just the new/updated pages with `wiki-lint.py --pages <vault-relative paths>`:
-  ```bash
-  uv run "$OBSIDIAN_VAULT_PATH/.claude/wiki-scripts/wiki-lint.py" --vault "$OBSIDIAN_VAULT_PATH" --pages cat/page-a.md cat/page-b.md
-  ```
-- [ ] `.manifest.json` resynced with `regen-manifest.py`
+- [ ] No orphans or broken links: `uv run .claude/wiki-scripts/wiki-lint.py --pages <pages you wrote> --summary`
 - [ ] Journal recorded via `wiki-journal.py` (not hand-edited)
 - [ ] Any hand-curated `index.md` updated (base-backed indexes need no edit)
 - [ ] Source attribution is present for every new claim
 - [ ] Inferred and ambiguous claims are marked with `^[inferred]` / `^[ambiguous]`
-- [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, **under 200 chars — count it; hard limit, `wiki-lint` fails 200+**)
+- [ ] Every new/updated page has a `summary:` frontmatter field (1–2 sentences, under 200 chars; `wiki-lint` flags longer ones)
 
 ## Reference
 
 Read on demand — not needed for a plain document ingest:
 
-- `wiki/references/page-protocol.md` — the Page-Writing Protocol (frontmatter, summary rule, provenance, links, privacy, journal/manifest).
+- `wiki/references/page-protocol.md` — the Page-Writing Protocol (frontmatter, summary rule, provenance, links, privacy, journal).
 - `references/multimodal-sources.md` — how to extract from image sources; read before processing any image.
 - `references/claude-history-mode.md` — the full Claude-history flow (data layout, survey/prefilter/cluster steps H1–H4); read before Claude History Mode.
 - `references/ingest-prompts.md` — LLM prompt templates used during extraction.

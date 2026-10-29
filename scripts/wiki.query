@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.8"
+# requires-python = ">=3.11"
 # dependencies = []
 # ///
 """Search the vault by frontmatter fields and file path.
@@ -36,7 +36,39 @@ import sys
 from typing import Dict, List, Optional, Tuple
 
 # Scaffolding basenames skipped everywhere — same set as the other wiki scripts.
-SCAFFOLD = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+# --- content-page rule (pasted verbatim into every script; scripts never import
+# each other). A vault-relative .md path is NOT a content page when any component
+# starts with "." or "_" (.obsidian, _raw, _sources, _archives), its first
+# component is "templates" (Obsidian templates folder), it is a root-level
+# yyyy-MM-dd.md daily note, or its basename is scaffolding.
+NON_PAGE_NAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+_DAILY_NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+
+
+def is_content_page(rel) -> bool:
+    """True iff the vault-relative path `rel` (str or path) is a content page."""
+    parts = [p for p in str(rel).replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    if any(p.startswith((".", "_")) for p in parts):
+        return False
+    if parts[0] == "templates":
+        return False
+    if len(parts) == 1 and _DAILY_NOTE_RE.match(parts[0]):
+        return False
+    return parts[-1] not in NON_PAGE_NAMES
+# --- end content-page rule
+
+
+def walk_md(vault):
+    """Every *.md under the vault, sorted, pruning dot- and _-dirs while walking (a
+    `_` mail archive can hold thousands of files; rglob would visit them all)."""
+    import os as _os
+    out = []
+    for dirpath, dirnames, filenames in _os.walk(vault):
+        dirnames[:] = [d for d in dirnames if not d.startswith((".", "_"))]
+        out.extend(pathlib.Path(dirpath) / f for f in filenames if f.endswith(".md"))
+    return sorted(out)
 
 # Searchable frontmatter fields and whether each is a list or a scalar.
 LIST_FIELDS = {"tags", "aliases"}
@@ -172,12 +204,32 @@ def resolve_vault(explicit: Optional[str] = None) -> pathlib.Path:
     )
 
 
+def fold(s: str) -> str:
+    """Lowercase and strip accents, so `cafe` finds `café` and `sedinta` finds `ședința`."""
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFKD", s)
+                   if not unicodedata.combining(c)).lower()
+
+
+def read_head(p: pathlib.Path) -> str:
+    """Enough of a page to hold its frontmatter: the first 8 KB, or the whole file when
+    the block is longer. Only frontmatter is scored, so bodies are never read."""
+    try:
+        with open(p, encoding="utf-8-sig", errors="replace") as fh:
+            head = fh.read(8192)
+            if head.startswith("---") and "\n---" not in head[3:]:
+                head += fh.read()
+            return head
+    except OSError:
+        return ""
+
+
 def parse_query(tokens: List[str]) -> Tuple[str, List[str]]:
     """Split raw args into (mode, keywords). mode is 'and' or 'or'."""
     mode = "or"
     keywords = []
     for tok in tokens:
-        low = tok.lower()
+        low = fold(tok)
         if low == "and":
             mode = "and"
             continue
@@ -208,6 +260,7 @@ def _get_list(lines: List[str], idx: int, rest: str) -> List[str]:
 def extract_frontmatter(text: str) -> Dict[str, object]:
     """Return the searchable frontmatter fields of a page as a dict."""
     fm: Dict[str, object] = {}
+    text = text.lstrip("\ufeff")  # BOM pages (Notepad, PowerShell) still have frontmatter
     if not text.startswith("---"):
         return fm
     end = text.find("\n---", 3)
@@ -232,13 +285,13 @@ def kw_score(kw: str, field: str, value) -> int:
     if isinstance(value, list):
         best = 0
         for item in value:
-            low = item.lower()
+            low = fold(item)
             if kw == low:
                 return exact_w
             if kw in low:
                 best = max(best, partial_w)
         return best
-    low = str(value).lower()
+    low = fold(str(value))
     if kw == low:
         return exact_w
     return partial_w if kw in low else 0
@@ -313,19 +366,16 @@ def main() -> int:
 
     vault = resolve_vault(ns.vault)
 
+    from concurrent.futures import ThreadPoolExecutor
+    pages = [p for p in walk_md(vault) if is_content_page(p.relative_to(vault).as_posix())]
+    with ThreadPoolExecutor(max_workers=16) as pool:  # overlap /mnt/c open latency
+        heads = list(pool.map(read_head, pages))
+
     scored = []
-    for p in sorted(vault.rglob("*.md")):
+    for p, text in zip(pages, heads):
         rel = p.relative_to(vault)
-        if any(seg.startswith(".") or seg.startswith("_") for seg in rel.parts):
-            continue
-        if p.name in SCAFFOLD:
-            continue
-        try:
-            text = p.read_text(encoding="utf-8")
-        except OSError:
-            continue
         fm = extract_frontmatter(text)
-        rel_lower = rel.as_posix().lower()
+        rel_lower = fold(rel.as_posix())
         s = score_page(keywords, mode, fm, rel_lower, fields)
         if s > 0:
             scored.append((s, rel.as_posix(), fm.get("tags", [])))
@@ -350,5 +400,42 @@ def main() -> int:
     return 0 if scored else 1
 
 
+# --- run log (copied verbatim into every script, like resolve_vault) ---------
+# One TSV line per run in ~/.obsidian-wiki/runs.tsv: when, script, cwd, seconds,
+# exit code, args, and any RUN_STATS the script filled in. Machine-local, never
+# inside a vault; `claude-history.py runs` summarizes it. WIKI_RUNLOG=0 disables.
+# Never raises: logging must not break the tool.
+RUN_STATS: dict = {}
+
+
+def log_run(t0: float, rc) -> None:
+    import os as _os, sys as _sys, time as _time
+    from datetime import datetime as _dt
+    if _os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = __import__("pathlib").Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        fields = [_dt.now().isoformat(timespec="seconds"),
+                  __import__("pathlib").Path(_sys.argv[0]).name, _os.getcwd(),
+                  f"{_time.monotonic() - t0:.2f}", str(rc), " ".join(_sys.argv[1:])[:300],
+                  " ".join(f"{k}={v}" for k, v in RUN_STATS.items())]
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write("\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
+    except Exception:
+        pass
+# --- end run log -------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    import time as _time
+    _t0, _rc = _time.monotonic(), 1
+    try:
+        _rc = main()
+        _rc = 0 if _rc is None else _rc
+    except SystemExit as _e:
+        _rc = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+        raise
+    finally:
+        log_run(_t0, _rc)
+    sys.exit(_rc)

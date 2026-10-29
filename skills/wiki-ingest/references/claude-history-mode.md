@@ -1,10 +1,10 @@
 # Claude Conversation History Mode
 
-*(Merged from the former `wiki-claude-history` skill.)* When the source is the user's Claude Code
+When the source is the user's Claude Code
 history rather than documents, follow this flow instead of Steps 1 to 5 of the ingest skill. You are
 extracting knowledge from past conversations (rich but messy) and compiling the signal, not
-transcribing chats. Everything else (vault resolution, Page-Writing Protocol, manifest/journal in
-Step 7) is unchanged.
+transcribing chats. Everything else (vault resolution, Page-Writing Protocol, journal in Step 7)
+is unchanged.
 
 ## Data layout: scan both locations
 
@@ -15,8 +15,6 @@ Step 7) is unchanged.
 ├── projects/-Users-name-project/       # path-derived dir name (slashes to dashes)
 │   ├── <session-uuid>.jsonl            # conversation transcript (JSONL)
 │   └── memory/{MEMORY.md,user_*.md,feedback_*.md,project_*.md}
-├── sessions/<pid>.json                  # {pid, sessionId, cwd, startedAt, kind}
-├── history.jsonl, tasks/, plans/, settings.json
 ```
 
 **Source 2, `~/Library/Application Support/Claude/local-agent-mode-sessions/` (desktop app, macOS only).**
@@ -25,9 +23,8 @@ Step 7) is unchanged.
 branch on non-macOS or no-desktop-app; never error. Structure is deeply nested:
 `<outer-uuid>/<inner-uuid>/local_<session-uuid>.json` (session metadata) alongside
 `local_<session-uuid>/audit.jsonl` (tool-call audit log) and
-`local_<session-uuid>/.claude/projects/<name>/<uuid>.jsonl` (transcript, same JSONL format as CLI).
-Find them with `find … -name "local_*.json" -maxdepth 4`, `-name "audit.jsonl"`, and
-`-name "*.jsonl" -path "*/.claude/projects/*"`.
+`local_<session-uuid>/.claude/projects/<name>/<uuid>.jsonl` (transcript, same JSONL format as CLI);
+`find` them by those names.
 
 **Sources ranked by value:** (1) memory files, pre-distilled, already wiki-friendly, gold;
 (2) conversation JSONL, rich but noisy; (3) audit logs, a tool-call record of what was actually done;
@@ -35,11 +32,17 @@ Find them with `find … -name "local_*.json" -maxdepth 4`, `-name "audit.jsonl"
 
 ## Step H1: Survey and compute delta
 
-Glob both locations (`~/.claude/projects/*/`, `~/.claude/projects/*/memory/*.md`,
-`~/.claude/projects/*/*.jsonl`, plus the desktop `find`s above) and classify each file against
-`.manifest.json` as **new** / **modified** (`size_bytes` or `mtime` differ) / **unchanged** (skip in
-append mode). Report: "Found X CLI projects, Y desktop sessions. Memory: A. Conversations: B. Audit
-logs: C. Delta: D new, E modified."
+List sessions with `claude-history.py`, not globs and mtimes. Append-mode delta = sessions since the
+last `CLAUDE_HISTORY_INGEST` line in `log.md`; omit `--since` for a full pass:
+
+```bash
+uv run .claude/wiki-scripts/claude-history.py sessions --project <path or ~/.claude/projects dir name> --since <yyyy-MM-dd>
+uv run .claude/wiki-scripts/claude-history.py search <term> [<term> ...] --project <...> [--all]   # sessions about a topic
+```
+
+Rows give session id, date, counts and first prompt; the transcript is
+`~/.claude/projects/<dir>/<id>.jsonl`. Add memory files (`~/.claude/projects/*/memory/`) and the
+desktop `find`s above. Report counts per source and the new conversations since <date>.
 
 ## Step H2: Ingest memory files first
 
@@ -60,8 +63,7 @@ jq -rc 'select(.type=="user" or .type=="assistant")
   | if type=="array" then (map(select(.type=="text").text) | join("\n")) else . end' session.jsonl
 ```
 
-Which project a conversation belongs to comes from its file location (the `-Users-name-project` dir
-name decodes to the path); pull exact `cwd` with a separate one-line `jq` if needed. Skip subagent
+The transcript's dir name is its project path (non-alphanumerics as dashes). Skip subagent
 conversations (under `subagents/`) unless the user asks.
 
 ## Step H3b: Parse audit logs (desktop sessions only)
@@ -85,7 +87,7 @@ global knowledge to the best-fitting existing top-level folder (categories disco
 Step 3). Create/update the project overview at `projects/<name>/<name>.md`, **named after the project,
 never `_project.md`** (Obsidian uses the filename as the graph node label).
 
-Write each page per the Page-Writing Protocol (`wiki/references/page-protocol.md`). Two
+Create new pages with `wiki-new.py` and write them per the Page-Writing Protocol (`wiki/references/page-protocol.md`). Two
 history-specific points:
 
 - **Distill the _knowledge_, not the conversation.** Not "On March 15 the user asked about X"; write
@@ -95,7 +97,7 @@ history-specific points:
   `^[ambiguous]` when the user changed their mind across sessions or user and assistant contradicted
   each other unresolved.
 
-Then run Step 7 (manifest regen + journal) once at the end. Use a `CLAUDE_HISTORY_INGEST` log op-code,
+Then run Step 7 (index + journal) once at the end. Use a `CLAUDE_HISTORY_INGEST` log op-code,
 e.g. `--log 'CLAUDE_HISTORY_INGEST projects=N conversations=M desktop_sessions=D audit_logs=A pages_updated=X pages_created=Y mode=append'`.
 
 **Privacy:** on top of the `private_paths` + `visibility/` guards, conversation history has its own

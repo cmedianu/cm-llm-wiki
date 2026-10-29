@@ -8,13 +8,7 @@ The vault is self-describing — **no config file or per-vault settings are need
 
 ### Vault discovery
 
-Resolve in order, first hit wins:
-
-1. **Walk up from CWD** for `.manifest.json` (up to `$HOME` or `/`). Inside a vault always wins; needs no config.
-2. **Project map** — look up the project root (CWD or nearest ancestor) in `~/.obsidian-wiki/projects.json`, a flat `{ "project-path": "vault-name" }` map. A hit resolves the name to its `OBSIDIAN_VAULT_PATH` in `~/.obsidian-wiki/config.<name>`.
-3. **Quiz (interactive)** — neither of the above means ask the user to pick from the registered vaults (`~/.obsidian-wiki/config.*`), then write the choice into `projects.json` so it sticks for this project. See `wiki-vault`.
-4. **Headless fallback** — when no user is present (cron/scripts), read `OBSIDIAN_VAULT_PATH` from the active global config `~/.obsidian-wiki/config` (a symlink to one `config.<name>`).
-5. **Prompt setup** — nothing registered: "No vault found. Run `wiki-vault` to initialize."
+The order (walk-up, project map, quiz, headless fallback, prompt setup) is the Config Resolution Protocol in `wiki/SKILL.md`; the quiz is in `wiki-vault/references/registry.md`. The non-interactive steps as shell:
 
 ```bash
 # steps 1, 2, 4 (non-interactive). Step 3 (quiz) is agent-driven, not shell.
@@ -29,7 +23,7 @@ find_vault() {
   if [[ -f "$map" ]]; then                                          # 2: project map
     dir="$PWD"
     while [[ "$dir" != "/" ]]; do
-      name=$(python3 -c "import json,sys;print(json.load(open('$map')).get('$dir',''))" 2>/dev/null)
+      name=$("$(command -v python3 || command -v python)" -c "import json,sys;print(json.load(open('$map')).get('$dir',''))" 2>/dev/null)   # Windows Git Bash has only `python`
       [[ -n "$name" ]] && { vault_path "$name"; return; }
       [[ "$dir" == "$HOME" ]] && break
       dir="$(dirname "$dir")"
@@ -41,7 +35,7 @@ find_vault() {
 vault_path() { grep -m1 '^OBSIDIAN_VAULT_PATH=' "$HOME/.obsidian-wiki/config.$1" | cut -d= -f2-; }
 ```
 
-The maintenance scripts (`wiki-lint.py`, `wiki-graph.py`, `validate-frontmatter.py`, …) implement the walk-up (step 1) internally, so you can run them from anywhere inside the vault.
+The maintenance scripts (`wiki-lint.py`, `wiki-graph.py`, …) implement the walk-up (step 1) internally, so you can run them from anywhere inside the vault.
 
 ### Project map (`~/.obsidian-wiki/projects.json`)
 
@@ -78,12 +72,6 @@ STATE_DIR="$HOME/.obsidian-wiki/state/$VAULT_ID"
 
 The vault path is the input to the hash — copying the vault elsewhere produces a new scope, which is the desired behavior (the new vault is a different instance). `wiki-graph.py` uses exactly this for its graph snapshot.
 
-### Standard "Before You Start" block
-
-Every skill's setup section should read:
-
-> **Resolve vault** — per the Config Resolution Protocol in `wiki/SKILL.md`: manifest walk-up, then `~/.obsidian-wiki/projects.json`, then quiz the registered vaults (persisting the choice). All paths derive from the vault root.
-
 ## Relocatability Invariant
 
 The vault is the unit of relocation. A vault must satisfy this invariant:
@@ -93,7 +81,6 @@ The vault is the unit of relocation. A vault must satisfy this invariant:
 This rules out:
 
 - Absolute paths inside the vault pointing back to itself
-- Manifest entries keyed by absolute paths (relative paths only)
 - Symlinks pointing to absolute paths inside the vault
 
 The skills and scripts follow this. If you find one that violates it, that's a bug.
@@ -119,14 +106,12 @@ Snapshot conventions:
 - Path: `_sources/web/<slug>.md`
 - Slug: kebab-case, derived from `<domain>-<title-or-slug>-<year>`, e.g. `martinfowler-microservices-2014.md`, `instructables-carbon-quantum-dots-2019.md`
 - Format: Markdown preferred (clean grep target). HTML alongside (`<slug>.html`) only when conversion loses important structure. PDFs unchanged.
-- Manifest entry keyed by the snapshot path, written by `regen-manifest.py` like any other source (never hand-edited); record the original URL and fetch date in the snapshot page's own frontmatter (`source_url:`, `fetched:`).
-
-`wiki-lint` flags URL-only `sources:` entries that 404 and downgrades dependent claims to `^[ambiguous]` until a snapshot is added.
+- Record the original URL and fetch date in the snapshot page's own frontmatter (`source_url:`, `fetched:`).
 
 ## Renaming a Category
 
-1. Run `.claude/wiki-scripts/kebab-rename.py` (or a folder-only variant) — it renames the folder, rewrites every wikilink that referenced the old path, and re-keys the manifest in lockstep. Use `DRY_RUN=1` first.
+1. Run `.claude/wiki-scripts/kebab-rename.py` (or a folder-only variant) — it renames the folder, and rewrites every wikilink that referenced the old path. Use `DRY_RUN=1` first. For a single page or folder move, `wiki-mv.py OLD NEW` (dry run, then `--apply`).
 2. Update the section heading in `index.md`.
-3. Append a `RECATEGORIZE` entry to `log.md`.
+3. Journal it: `wiki-journal.py --log 'RECATEGORIZE old -> new: why'`.
 
 To **add** a category: `mkdir <name>` at the vault root. No config edit needed — skills discover it on next read. To **remove** a category: move its pages elsewhere first, then `rmdir`. To **hide a top-level directory from category discovery** (e.g. a scratch area you don't want ingest to write into), rename it with a `_` prefix.

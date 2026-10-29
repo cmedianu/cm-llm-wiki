@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.8"
+# requires-python = ">=3.11"
 # dependencies = []
 # ///
 """Generate a vault's AGENTS.md from its CLAUDE.md by expanding @-imports.
@@ -159,7 +159,7 @@ def sync(vault: pathlib.Path, check: bool) -> bool:
     if not claude_md.is_file():
         print(f"NO CLAUDE.md  {vault}")
         return False
-    want = BANNER + expand(claude_md.read_text(encoding="utf-8"), vault)
+    want = BANNER + expand(claude_md.read_text(encoding="utf-8-sig"), vault)
     have = agents_md.read_text(encoding="utf-8") if agents_md.is_file() else None
     fm, have_body = split_frontmatter(have) if have is not None else ("", None)
     if have_body == want:
@@ -217,5 +217,42 @@ def main():
     sys.exit(0 if ok else 1)
 
 
+# --- run log (copied verbatim into every script, like resolve_vault) ---------
+# One TSV line per run in ~/.obsidian-wiki/runs.tsv: when, script, cwd, seconds,
+# exit code, args, and any RUN_STATS the script filled in. Machine-local, never
+# inside a vault; `claude-history.py runs` summarizes it. WIKI_RUNLOG=0 disables.
+# Never raises: logging must not break the tool.
+RUN_STATS: dict = {}
+
+
+def log_run(t0: float, rc) -> None:
+    import os as _os, sys as _sys, time as _time
+    from datetime import datetime as _dt
+    if _os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = __import__("pathlib").Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        fields = [_dt.now().isoformat(timespec="seconds"),
+                  __import__("pathlib").Path(_sys.argv[0]).name, _os.getcwd(),
+                  f"{_time.monotonic() - t0:.2f}", str(rc), " ".join(_sys.argv[1:])[:300],
+                  " ".join(f"{k}={v}" for k, v in RUN_STATS.items())]
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write("\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
+    except Exception:
+        pass
+# --- end run log -------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    main()
+    import time as _time
+    _t0, _rc = _time.monotonic(), 1
+    try:
+        _rc = main()
+        _rc = 0 if _rc is None else _rc
+    except SystemExit as _e:
+        _rc = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+        raise
+    finally:
+        log_run(_t0, _rc)
+    sys.exit(_rc)

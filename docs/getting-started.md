@@ -5,13 +5,13 @@ Five-minute tour. Clone, wire one vault, run your first three commands.
 ## What you get
 
 - Agent skills implementing Andrej Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) for Obsidian — distill raw sources into a compounding wiki, query it, keep it tidy. They use the [Agent Skills](https://agentskills.io/) SKILL.md standard, so the same install works in **Claude Code, Codex CLI, and Copilot CLI** (see [Other agents](#other-agents-codex-cli--copilot-cli)).
-- Python utilities: `wiki-lint.py` and `wiki-graph.py` — the deterministic backends behind the `wiki-lint` and `wiki-status` insights skills — plus gap-fillers the skills don't cover (rebuild manifest, mass kebab-case rename, validate frontmatter, sync AGENTS.md). All are PEP 723 `uv` scripts: run with `uv run`, dependencies handled automatically.
+- Python utilities: `wiki-lint.py` and `wiki-graph.py` — the deterministic backends behind the `wiki-lint` skill (audit, status, insights) — plus gap-fillers the skills don't cover (vault marker repair, mass kebab-case rename, validate frontmatter, sync AGENTS.md). All are PEP 723 `uv` scripts: run with `uv run`, dependencies handled automatically.
 
 ## Prerequisites
 
-**For most skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work. The exceptions are `wiki-lint` and `wiki-status` insights, which call the Python analysis scripts below; everything else (ingest, query, link, capture, synthesize, …) is pure Claude Code. (Codex CLI and Copilot CLI work too — wire with the same steps, then see [Other agents](#other-agents-codex-cli--copilot-cli). The link method's AGENTS.md generation needs `uv`.)
+**For most skills (the whole point):** just [Claude Code](https://claude.com/claude-code), installed and authenticated, and an Obsidian vault (existing or empty directory, anywhere on disk). No Python, no `uv` — copy the skills in (see "Easiest: copy" below) and they work. The exception is `wiki-lint`, which calls the Python analysis scripts below; everything else (ingest, query, capture, …) is pure Claude Code. (Codex CLI and Copilot CLI work too — wire with the same steps, then see [Other agents](#other-agents-codex-cli--copilot-cli). The link method's AGENTS.md generation needs `uv`.)
 
-**If you run the Python scripts** (the `wiki-lint` / `wiki-status`-insights backends, plus rebuild-manifest / mass-rename / validate-frontmatter / sync-agents):
+**If you run the Python scripts** (the `wiki-lint` backends, plus the page scaffold, move, commit and history tools, vault marker repair, mass-rename, sync-agents):
 
 - [`uv`](https://docs.astral.sh/uv/) (all platforms) — every script is a PEP 723 `uv` script; run them all as `uv run <script>` and `uv` supplies the interpreter and any dependency (`pyyaml` for the YAML-parsing ones) automatically. No separate Python install to manage, same command on every OS. The `wire-vault` scripts also call `uv` to generate `AGENTS.md`.
 
@@ -68,18 +68,18 @@ Then say these in plain English. The skills auto-load based on what you ask.
 
 ### 1. See the state
 
-> show me the status
+> what's the wiki status?
 
-Triggers `wiki-status`. Reports how many sources are ingested, what's pending, whether to append or rebuild next.
+Triggers `wiki-lint`'s Status mode: pages changed since the last journal entry (from git), sources and Claude conversations waiting to be ingested, and lint health.
 
 If the vault is fresh → run `wiki-vault` first ("set up my wiki").
-If the vault already has notes but no `.manifest.json` → run `scripts/regen-manifest.py` from the vault root to bootstrap it (`uv run .claude/wiki-scripts/regen-manifest.py`, same command on Windows).
+If the vault already has notes but no `.manifest.json` → run `scripts/regen-manifest.py` from the vault root to create the marker (`uv run .claude/wiki-scripts/regen-manifest.py --vault .`, same command on Windows).
 
 ### 2. Add a source
 
 > ingest this folder: ~/Documents/research-papers
 
-Triggers `wiki-ingest`. Reads each source, distills it into wiki pages, updates `index.md`, appends to `log.md`, updates `.manifest.json`. New pages land under your vault's category folders (the top-level folders are the taxonomy).
+Triggers `wiki-ingest`. Reads each source, distills it into wiki pages, back-links them from existing pages, and journals the change in `log.md`. New pages land under your vault's category folders (the top-level folders are the taxonomy).
 
 ### 3. Ask the wiki
 
@@ -96,16 +96,18 @@ For cheap lookups: phrase it as "quick answer: ..." and it'll read only `summary
 | Save the current chat | "save this to my wiki" | `wiki-capture` |
 | Add new sources | "ingest these papers" | `wiki-ingest` |
 | Ask the wiki | "what do I know about X?" | `wiki-query` |
-| Run web research and file results | "research LLM evaluation" | `wiki-research` |
 | Audit and fix issues | "audit my wiki" | `wiki-lint` |
-| Add missing cross-links | "link my pages" | `wiki-link` |
+| See what changed and what is waiting | "wiki status" | `wiki-lint` (Status mode) |
+| Add missing cross-links | "link my pages" | `wiki-ingest` (back-link pass) |
 | Push project work to the wiki | "save this project to the wiki" | `wiki-capture` (project-sync mode) |
-| Find cross-cutting connections | "synthesize my wiki" | `wiki-link` (synthesis mode) |
+| Find cross-cutting connections | "synthesize my wiki" | `wiki-compact` (synthesis) |
+| Retire a page or folder | "/wiki-archive" | `wiki-archive` |
+| Note something in the log | "/wiki-journal" | `wiki-journal` |
 | Mine your Claude session history | "process my Claude history" | `wiki-ingest` (Claude-history mode) |
 | Start fresh | "rebuild the wiki" | `wiki-compact` (Rebuild Mode) |
 | Set up or switch vaults | "/wiki-switch work" | `wiki-vault` |
 
-> **Heads-up:** `wiki-lint` ("audit my wiki") and `wiki-status` insights ("show me the hubs") run the Python analysis scripts (`wiki-lint.py` / `wiki-graph.py`), so they need `uv` — see [Prerequisites](#prerequisites). Every other skill needs nothing but Claude Code.
+> **Heads-up:** `wiki-lint` ("audit my wiki", "show me the hubs") runs the Python analysis scripts (`wiki-lint.py` / `wiki-graph.py`), so it needs `uv` — see [Prerequisites](#prerequisites). Every other skill needs nothing but Claude Code.
 
 Every skill's `description:` field (top of each `SKILL.md`) lists the exact phrases that trigger it. If you forget what to say, browse those.
 
@@ -114,7 +116,7 @@ Every skill's `description:` field (top of each `SKILL.md`) lists the exact phra
 The wiring above already serves both; nothing extra to install. What differs from Claude Code:
 
 - **Skills** load from `~/.agents/skills/` (linked by the `--user` step). Invoke explicitly
-  with `$wiki-status` in Codex or `/wiki-status` in Copilot, or just ask in plain English
+  with `$wiki-lint` in Codex or `/wiki-lint` in Copilot, or just ask in plain English
   and let the description-based auto-selection pick the skill, same as Claude.
 - **Instructions** come from the generated `AGENTS.md` (Codex has no `@`-import, so the
   shared conventions are inlined). Edit `CLAUDE.md`, never `AGENTS.md`; re-run
@@ -136,13 +138,11 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 ## Read the keystone
 
-[`skills/wiki/SKILL.md`](../skills/wiki/SKILL.md) is the theory doc — three-layer architecture, page template, provenance markers, retrieval primitives. Every other skill defers to it. A ~5-minute read — go through it once before going deep.
+[`skills/wiki/SKILL.md`](../skills/wiki/SKILL.md) is the theory doc — three-layer architecture, page template, provenance markers. Every other skill defers to it. A ~5-minute read — go through it once before going deep.
 
 ## Common gotchas
 
-**`.manifest.json` drifts.** If you rename/move/delete files outside the tooling (e.g. in Obsidian directly), run `scripts/regen-manifest.py` from the vault root to resync. Use `DRY_RUN=1` first to preview.
-
-**Mass-rename, broken wikilinks.** `scripts/kebab-rename.py` does file rename + wikilink rewrite + manifest re-key in lockstep. Adapt `FOLDER_RENAMES` / `BRAND_PRESERVATIONS` / `PATH_OVERRIDES` for your own conventions before running.
+**Mass-rename, broken wikilinks.** `scripts/kebab-rename.py` does file rename + wikilink rewrite in lockstep (`wiki-mv.py` for a single page). Adapt `FOLDER_RENAMES` / `BRAND_PRESERVATIONS` / `PATH_OVERRIDES` for your own conventions before running.
 
 **Windows links.** Native Windows (`wire-vault.ps1`) links the directories with **junctions**, which every Windows tool — Claude Code, Obsidian, Python — follows transparently. The single `wiki-conventions.md` is a real symlink where possible, else a **copy**; if it fell back to a copy, repo-side edits to `wiki-conventions.md` won't reach the vault until you re-run `wire-vault.ps1` (enable Developer Mode for a live link). Obsidian ignores `.claude/` either way.
 
@@ -153,7 +153,7 @@ Wire each vault the same way (steps 1–3). Two ways to switch:
 
 WSL is the exception: it resolves reparse points natively, so a `wire-vault.sh` setup used **only** from WSL works even when the vault sits under OneDrive — right up until a native-Windows tool needs `.claude/`, at which point the link reads as a broken 0 KB file. If your workflow is WSL-only, you can ignore this; if anything on the Windows side touches the vault, copy.
 
-**No `.manifest.json`?** Skills can't locate the vault and tell you to run `wiki-vault`. That file is the canonical vault marker — `wiki-vault` creates it on a fresh vault, or `scripts/regen-manifest.py` bootstraps one on a vault that already has notes.
+**No `.manifest.json`?** Skills can't locate the vault and tell you to run `wiki-vault`. That file is the vault marker (plus `private_paths`; it tracks no pages and Obsidian never reads it) — `wiki-vault` creates it on a fresh vault, and `regen-manifest.py --vault <vault>` creates or repairs it on one that already has notes.
 
 **Moved the vault, or `.claude` links broke?** Re-run `wire-vault.sh <vault>` from the repo to repair the links — `--check` first if you just want a diagnosis (on Windows: `wire-vault.ps1 <vault>`, `-Check` to diagnose). The vault content travels fine on its own; only the links back into this repo need re-pointing.
 

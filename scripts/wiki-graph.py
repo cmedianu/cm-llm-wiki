@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.10"
+# requires-python = ">=3.11"
 # dependencies = ["pyyaml"]
 # ///
 """Compute the wikilink-graph structure of an Obsidian vault.
@@ -27,8 +27,9 @@ Snapshot:
   may have changed independently.
 
 Content pages:
-  Any *.md whose vault-relative path parts NONE start with '.' or '_', and
-  whose basename is not in {index.md, log.md, hot.md, README.md, CLAUDE.md}.
+  Any *.md passing the shared is_content_page() rule: no path part starts with
+  '.' or '_', not under templates/, not a root yyyy-MM-dd.md daily note, and
+  basename not in {index.md, log.md, hot.md, README.md, CLAUDE.md, AGENTS.md}.
 
 Graph nodes:
   Keyed by vault-relative path WITHOUT the .md extension
@@ -54,10 +55,39 @@ from typing import Any, Optional
 
 import yaml
 
-# ---------------------------------------------------------------------------
-# Scaffold / meta exclusions — same set as validate-frontmatter.py
-# ---------------------------------------------------------------------------
-SCAFFOLD_BASENAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+# --- content-page rule (pasted verbatim into every script; scripts never import
+# each other). A vault-relative .md path is NOT a content page when any component
+# starts with "." or "_" (.obsidian, _raw, _sources, _archives), its first
+# component is "templates" (Obsidian templates folder), it is a root-level
+# yyyy-MM-dd.md daily note, or its basename is scaffolding.
+NON_PAGE_NAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+_DAILY_NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+
+
+def is_content_page(rel) -> bool:
+    """True iff the vault-relative path `rel` (str or path) is a content page."""
+    parts = [p for p in str(rel).replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    if any(p.startswith((".", "_")) for p in parts):
+        return False
+    if parts[0] == "templates":
+        return False
+    if len(parts) == 1 and _DAILY_NOTE_RE.match(parts[0]):
+        return False
+    return parts[-1] not in NON_PAGE_NAMES
+# --- end content-page rule
+
+
+def walk_md(vault):
+    """Every *.md under the vault, sorted, pruning dot- and _-dirs while walking (a
+    `_` mail archive can hold thousands of files; rglob would visit them all)."""
+    import os as _os
+    out = []
+    for dirpath, dirnames, filenames in _os.walk(vault):
+        dirnames[:] = [d for d in dirnames if not d.startswith((".", "_"))]
+        out.extend(pathlib.Path(dirpath) / f for f in filenames if f.endswith(".md"))
+    return sorted(out)
 
 # ---------------------------------------------------------------------------
 # Vault discovery (standard resolver, replicated verbatim across scripts/)
@@ -140,24 +170,15 @@ def snapshot_path(vault: pathlib.Path) -> pathlib.Path:
 # Content-page discovery
 # ---------------------------------------------------------------------------
 
-def is_content_page(rel: pathlib.Path) -> bool:
-    """Return True iff this vault-relative path is a 'content page'."""
-    if any(part.startswith(".") or part.startswith("_") for part in rel.parts):
-        return False
-    if rel.name in SCAFFOLD_BASENAMES:
-        return False
-    return True
-
-
 def discover_pages(vault: pathlib.Path) -> dict[str, pathlib.Path]:
     """Return {node_key: absolute_path} for every content page.
 
     node_key = vault-relative path without .md extension, with forward slashes.
     """
     pages: dict[str, pathlib.Path] = {}
-    for f in sorted(vault.rglob("*.md")):
+    for f in walk_md(vault):
         rel = f.relative_to(vault)
-        if not is_content_page(rel):
+        if not is_content_page(rel.as_posix()):
             continue
         key = rel.with_suffix("").as_posix()
         pages[key] = f
@@ -342,7 +363,7 @@ def build_graph(vault: pathlib.Path) -> dict:
 
     for key, path in pages.items():
         try:
-            text = path.read_text(encoding="utf-8", errors="replace")
+            text = path.read_text(encoding="utf-8-sig", errors="replace")
         except OSError:
             text = ""
         fm = parse_frontmatter(text)
@@ -754,5 +775,42 @@ def main() -> int:
     return 0
 
 
+# --- run log (copied verbatim into every script, like resolve_vault) ---------
+# One TSV line per run in ~/.obsidian-wiki/runs.tsv: when, script, cwd, seconds,
+# exit code, args, and any RUN_STATS the script filled in. Machine-local, never
+# inside a vault; `claude-history.py runs` summarizes it. WIKI_RUNLOG=0 disables.
+# Never raises: logging must not break the tool.
+RUN_STATS: dict = {}
+
+
+def log_run(t0: float, rc) -> None:
+    import os as _os, sys as _sys, time as _time
+    from datetime import datetime as _dt
+    if _os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = __import__("pathlib").Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        fields = [_dt.now().isoformat(timespec="seconds"),
+                  __import__("pathlib").Path(_sys.argv[0]).name, _os.getcwd(),
+                  f"{_time.monotonic() - t0:.2f}", str(rc), " ".join(_sys.argv[1:])[:300],
+                  " ".join(f"{k}={v}" for k, v in RUN_STATS.items())]
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write("\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
+    except Exception:
+        pass
+# --- end run log -------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    import time as _time
+    _t0, _rc = _time.monotonic(), 1
+    try:
+        _rc = main()
+        _rc = 0 if _rc is None else _rc
+    except SystemExit as _e:
+        _rc = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+        raise
+    finally:
+        log_run(_t0, _rc)
+    sys.exit(_rc)

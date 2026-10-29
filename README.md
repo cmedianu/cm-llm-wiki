@@ -25,7 +25,7 @@ code still resembles the original.
 
 ```
 skills/              Agent skills (SKILL.md format) — the schema layer of the wiki pattern
-scripts/             Python maintenance + analysis scripts (wiki-lint, wiki-graph, kebab-rename, regen-manifest, validate-frontmatter, sync-agents)
+scripts/             Python maintenance + analysis scripts (wiki-lint, wiki-graph, kebab-rename, regen-manifest, wiki-new, wiki-mv, wiki-commit, stamp-staged, claude-history, sync-agents)
 hooks/               update-timestamp PostToolUse hook (one script, three agents) + Copilot hook config
 wiki-conventions.md  Shared conventions, @-imported by every vault's CLAUDE.md and inlined into its generated AGENTS.md
 ```
@@ -112,9 +112,10 @@ through that symlink, so editing them once in the repo updates all vaults. Keep
 per-vault rules below the import. (The by-hand form skips the generated
 AGENTS.md / hook configs; run `wire-vault.sh` for the full multi-agent wiring.)
 
-If the vault has no `.manifest.json` yet, initialize it: run `wiki-vault` ("set up
-my wiki") from inside the vault, or `wiki-scripts/regen-manifest.py` if it already
-has notes. Keep the vault relocatable, with no hard-coded absolute paths pointing back
+If the vault has no `.manifest.json` yet (the marker the scripts walk up to; it holds only
+the version, dates and `private_paths`), create it with
+`uv run .claude/wiki-scripts/regen-manifest.py --vault <vault>`, or let `wiki-vault`
+("set up my wiki") build a new vault from scratch. Keep the vault relocatable, with no hard-coded absolute paths pointing back
 at itself, so `cp -r <vault> elsewhere && cd elsewhere` just works (see the keystone
 `skills/wiki/SKILL.md`).
 
@@ -166,9 +167,9 @@ first match wins:
    `~/.obsidian-wiki/config` symlink.
 
 A vault is *registered* by a `~/.obsidian-wiki/config.<name>` file holding its
-`OBSIDIAN_VAULT_PATH`. The `wiki-vault` skill manages the registry, the project map, and the
-quiz (`/wiki-switch` with no args re-runs the quiz; `/wiki-switch <name>` maps the current
-project; `/wiki-switch list|where|new|forget|default`). None of this lives inside a vault, so
+`OBSIDIAN_VAULT_PATH`. The `wiki-vault` skill registers vaults and maps projects to them; its
+reference covers the quiz and `/wiki-switch` (`<name>`, `list`, `where`, `new`, `forget`,
+`default`). None of this lives inside a vault, so
 vaults stay relocatable.
 
 ## Portability & moving a vault
@@ -176,8 +177,8 @@ vaults stay relocatable.
 The setup has two layers with different portability — worth understanding before you
 copy or share a vault:
 
-- **Vault content is portable.** Pages, `index.md`, `log.md`, and `.manifest.json` use
-  relative paths only, so `cp -r <vault> elsewhere` keeps the wiki fully functional *as
+- **Vault content is portable.** Pages, `index.md` and `log.md` use relative paths only and
+  `.manifest.json` holds no paths at all, so `cp -r <vault> elsewhere` keeps the wiki fully functional *as
   data*.
 - **Tooling is shared, not copied.** The skills, scripts, and conventions live here in
   the repo. Skills are linked once at user level; scripts/conventions/hooks are *symlinked*
@@ -202,21 +203,25 @@ you whether you need to. The mental model: **vault = data (portable), repo = too
 
 ## Skills
 
-Core karpathy operations:
-
 - `wiki`: three-layer architecture and conventions (the "theory" keystone)
-- `wiki-vault`: initialize a new vault, and switch/select which vault a project targets (registry + quiz)
-- `wiki-ingest`: distill source documents into wiki pages; **Claude-history mode** mines `~/.claude` session data
+- `wiki-capture`: save the current conversation as a structured page; **project-sync mode** pushes any working project into the vault
+- `wiki-ingest`: distill source documents into wiki pages, then back-link them; **Claude-history mode** mines `~/.claude` session data
 - `wiki-query`: answer questions against the wiki
-- `wiki-lint`: health check (orphans, contradictions, stale pages)
-- `wiki-status`: manifest delta vs sources
-- `wiki-compact`: merge/prune/archive the wiki; **Rebuild Mode** archives, rebuilds from scratch, restores
+- `wiki-lint`: health check (orphans, contradictions, stale pages); **Status mode** (what changed, what is waiting) and **Insights mode** (hubs, bridges)
+- `wiki-compact`: merge/prune/archive/retire, synthesis pages; **Rebuild Mode** archives, rebuilds from scratch, restores
+- `wiki-archive`, `wiki-journal`: thin shortcuts for retiring pages to `_archives/` and writing a journal line
+- `wiki-vault`: set up a new vault; register vaults and map projects to them
 
-Adjuncts:
+The family was trimmed to what gets used; see the 2026-10-28 entry in
+[`docs/design-notes.md`](docs/design-notes.md).
 
-- `wiki-link`: write-side, discovers and inserts missing wikilinks; **synthesis mode** creates cross-page synthesis pages
-- `wiki-capture`: save current conversation as a structured page; **project-sync mode** pushes any working project into the vault
-- `wiki-research`: multi-round web research + auto-file results
+## Vault-local skills
+
+A vault can carry its own skills under `<vault>/.claude/skills/<name>/` for work only that
+vault does (for example a batch skill that dates, resizes and logs photos: a script for the
+mechanics, a `SKILL.md` for the judgement). They load only when Claude Code runs inside that vault, sit beside the
+user-level `wiki-*` skills, and are never touched by `wire-vault`. Keep the same split as the
+toolkit: anything deterministic in a script, only judgement in the prompt.
 
 ## Scripts
 

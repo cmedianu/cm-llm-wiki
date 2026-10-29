@@ -2,6 +2,22 @@
 
 Decision log for the wiki tooling. Git history answers *what changed*; this file answers *why it is this way*. One dated entry per decision — Context → Decision → Consequences, with pointers to where the decision lives in code. Append new entries at the top.
 
+## 2026-10-28 — the skill family is trimmed to what gets used; the manifest is only a marker
+
+**Context:** Over ~140 sessions in two vaults (2026-07 to 10-27), skill use was lopsided: `wiki-capture` 13 invocations, `wiki-ingest` 3 (+11 typed `/wiki-ingest`), `wiki-query` 1 (+9 typed; the `wiki.query` CLI is the real query surface), `wiki-lint` 1, `wiki-compact` 1. `wiki-link` (and its synthesis mode), `wiki-status`, `wiki-research` and `wiki-vault` were never invoked, yet carried about a third of the SKILL.md text. The user typed `/wiki-archive` and `/wiki-journal`, which did not exist. Separately, `.manifest.json`'s per-page entries disagreed with page frontmatter on 83% of pages and nothing read them; the only live consumer was `wiki-status`'s delta, and `ingest-prep`'s new/modified verdict already came from the `_sources/` snapshot.
+
+**Decision:** Keep `wiki`, `wiki-capture`, `wiki-ingest`, `wiki-query`, `wiki-lint`, `wiki-compact`. `wiki-status` becomes `wiki-lint`'s Status mode (git status/log for pages, `ingest-prep.py --sources-dir` for sources, `claude-history.py sessions` for conversations, `wiki-lint.py --summary` for health) and Insights mode (`wiki-graph.py`, in `references/insights.md`). `wiki-link`'s back-link pass becomes a step of ingest and capture; synthesis moves to `wiki-compact/references/synthesis.md`; its triggers moved into those skills' descriptions. `wiki-research` is retired (generic research skills cover it). `wiki-vault` keeps the new-vault flow and register/map/list, with the quiz and `/wiki-switch` in a reference. Two thin routers were added for the names the user typed: `wiki-archive` (compact's retire action) and `wiki-journal` (`wiki-journal.py`). `.manifest.json` shrinks to `{version, created, updated, private_paths}`: it marks the vault root for the scripts' walk-up (Obsidian never reads it), `regen-manifest.py` creates or repairs it and strips legacy entries, and `ingest-prep`'s `manifest_status` becomes `source_status` (old key kept as an alias), decided by the `_sources/` snapshot, falling back to a page whose filename matches.
+
+**Consequences:** Skill text dropped by about a quarter (21.8k to 16.4k words across `skills/`), and every invocation loads less. No skill reads or writes per-page manifest state, so renames re-key nothing and resync diffs disappear. Status needs a git-managed vault for its page delta. Removed skills leave dangling `~/.claude/skills` / `~/.agents/skills` links; `wire-vault --user` has to prune links into `skills/` that no longer exist.
+
+## 2026-10-27 — the gate checks the commit, not the vault
+
+**Context:** The pre-commit hook ran frontmatter validation and a whole-vault lint on every commit: 21-27 s on the 450-page reference vault, 100-230 s on a small vault holding a large `_`-prefixed mail archive, two commits killed by a tool timeout. The workaround convention ("`--no-verify` on every commit but the last") was followed on 32% and 91% of commits respectively, and drifted into "always skip". Profiling showed ~85% of lint time was redundant filesystem traffic: a `stat()` per wikilink, each page read three times, recursive globs descending into `_` and dot dirs.
+
+**Decision:** `wiki-lint.py` walks once (dot- and `_`-dirs pruned), reads each page once with 16 reads in flight, resolves links in memory case-insensitively, and parses YAML with libyaml (3 s full run). `--staged --errors-only` reads only the staged pages and is the whole gate; `validate-frontmatter.py` is an alias. `stamp-staged.py` sets `updated:` on staged pages at commit time, because agents edit pages through the shell about half the time and the PostToolUse hook never sees those edits. `is_content_page()` joins `resolve_vault()` as a deliberately copy-pasted helper with one documented rule.
+
+**Consequences:** A commit is gated in about two seconds and an unstaged page left by another session never blocks it. The batching convention is gone. A partially staged page is not stamped (re-adding it would stage hunks the author held back). Graph-wide warnings (orphans, index coverage) are not part of the gate; run `wiki-lint.py --summary` for them.
+
 ## 2026-07-17 — SKILL.md files use progressive disclosure
 
 **Context:** A SKILL.md loads whole into the agent's context on every invocation, so its length is a per-invocation token cost. `wiki-ingest/SKILL.md` carried ~100 lines of Claude-history mode plus the multimodal branch on every plain document ingest, and every write-side skill was told to read the full ~280-line `wiki/SKILL.md` just for the Page-Writing Protocol.
@@ -14,7 +30,7 @@ Decision log for the wiki tooling. Git history answers *what changed*; this file
 
 **Context:** A real ingest session spent 4–5 sequential shell round-trips on survey work before writing anything: list categories, check the manifest for the source, grep for related pages, detect whether `index.md` is base-backed, read `private_paths`. Round-trips, not tokens, dominated wall-clock.
 
-**Decision:** One read-only script, `scripts/ingest-prep.py`, emits all of it as a single JSON object (`categories`, `private_paths`, `manifest_status`, `index_base_backed`, `related_pages`), plus a `--backlinks-for` mode that surfaces post-write back-link candidates.
+**Decision:** One read-only script, `scripts/ingest-prep.py`, emits all of it as a single JSON object (`categories`, `private_paths`, `manifest_status`, `index_base_backed` (since 2026-10-27 `index_status`: base_backed / hybrid / manual), `related_pages`), plus a `--backlinks-for` mode that surfaces post-write back-link candidates.
 
 **Consequences:** One tool call replaces the survey; ad-hoc python heredocs disappear from ingest transcripts. The skill instructs agents to call it instead of hand-rolling greps.
 

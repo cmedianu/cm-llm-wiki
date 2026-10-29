@@ -1,6 +1,6 @@
 #!/usr/bin/env -S uv run --script
 # /// script
-# requires-python = ">=3.8"
+# requires-python = ">=3.11"
 # dependencies = []
 # ///
 """Rename every content .md to kebab-case-lowercase and rewrite all wikilinks.
@@ -152,15 +152,79 @@ def slugify(name: str) -> str:
     return s
 
 
+# --- content-page rule (pasted verbatim into every script; scripts never import
+# each other). A vault-relative .md path is NOT a content page when any component
+# starts with "." or "_" (.obsidian, _raw, _sources, _archives), its first
+# component is "templates" (Obsidian templates folder), it is a root-level
+# yyyy-MM-dd.md daily note, or its basename is scaffolding.
+NON_PAGE_NAMES = {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}
+_DAILY_NOTE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}\.md$")
+
+
+def is_content_page(rel) -> bool:
+    """True iff the vault-relative path `rel` (str or path) is a content page."""
+    parts = [p for p in str(rel).replace("\\", "/").split("/") if p]
+    if not parts:
+        return False
+    if any(p.startswith((".", "_")) for p in parts):
+        return False
+    if parts[0] == "templates":
+        return False
+    if len(parts) == 1 and _DAILY_NOTE_RE.match(parts[0]):
+        return False
+    return parts[-1] not in NON_PAGE_NAMES
+# --- end content-page rule
+
+
+def load_manifest(path: pathlib.Path, dry: bool):
+    """Parsed .manifest.json dict, or None when missing or unparsable.
+
+    The repair tools must not crash on the file they repair: an unparsable
+    manifest is treated as missing and moved aside to .manifest.json.bad (left
+    in place under --dry-run), with a warning on stderr."""
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict):
+            return data
+        problem = "top level is not a JSON object"
+    except (UnicodeDecodeError, json.JSONDecodeError) as e:
+        problem = str(e)
+    bad = path.with_name(path.name + ".bad")
+    if dry:
+        print(f"WARNING: {path.name} is unparsable ({problem}); treating it as missing "
+              f"(a real run moves it to {bad.name})", file=sys.stderr)
+    else:
+        os.replace(path, bad)
+        print(f"WARNING: {path.name} is unparsable ({problem}); moved it to {bad.name} "
+              "and treating the manifest as missing", file=sys.stderr)
+    return None
+
+
+def iter_md(vault: pathlib.Path):
+    """Every *.md under the vault, sorted, never descending into dot dirs or
+    symlinked directories (Path.rglob follows dir symlinks on Python <= 3.12,
+    so a linked _sources/ or scripts dir would otherwise be walked)."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(vault, followlinks=False):
+        dirnames[:] = [d for d in dirnames if not d.startswith(".")]
+        for fn in filenames:
+            if fn.endswith(".md"):
+                out.append(pathlib.Path(dirpath) / fn)
+    return sorted(out)
+
+
 def build_path_mapping():
     """{old_vault_relpath_without_md: new_vault_relpath_without_md}"""
     mapping = {}
-    for p in sorted(VAULT.rglob("*.md")):
+    for p in iter_md(VAULT):
         rel = p.relative_to(VAULT).as_posix()
         if any(part.startswith((".", "_")) for part in rel.split("/")):
             continue  # dotdirs and _-dirs (_sources, _raw, _archives) are not wiki content
-        if rel.split("/")[-1] in {"index.md", "log.md", "hot.md", "README.md", "CLAUDE.md", "AGENTS.md"}:
-            # scaffolding at any depth: keep these names — never slugify a README
+        if not is_content_page(rel):
+            # scaffolding at any depth, templates/, root daily notes: keep these
+            # names (links to them still resolve) — never slugify a README
             mapping[rel[:-3]] = rel[:-3]
             continue
         parent_parts = rel.split("/")[:-1]
@@ -191,7 +255,14 @@ def build_basename_map(path_map):
     return {b: pick[b] for b, c in counts.items() if c == 1}
 
 
-WIKILINK_RE = re.compile(r"\[\[([^\[\]|#]+)([#|][^\[\]]*)?\]\]")
+# [[target]] plus an optional suffix starting at #heading, ^block, |alias or a
+# table-escaped \|alias. The target is lazy so "a\|b" yields "a", not "a\".
+WIKILINK_RE = re.compile(r"\[\[([^\[\]|#^]+?)((?:\\?\||[#^])[^\[\]]*)?\]\]")
+_FENCE_OPEN_RE = re.compile(r"^\s*(`{3,}|~{3,})")
+# Embeds/links to attachments ([[diagram.png]], ![[clip.mp4]]) are not pages.
+_NON_MD_EXT_RE = re.compile(
+    r"\.(png|jpe?g|gif|svg|webp|bmp|avif|pdf|mp3|mp4|m4a|wav|ogg|flac|webm|mov|mkv|"
+    r"canvas|base|excalidraw|csv|json|txt|zip)$", re.IGNORECASE)
 
 
 def rewrite_wikilinks(text, path_map, basename_map, current_file_rel, problems):
@@ -202,6 +273,11 @@ def rewrite_wikilinks(text, path_map, basename_map, current_file_rel, problems):
     def repl(m):
         target = m.group(1).strip()
         rest = m.group(2) or ""
+        if _NON_MD_EXT_RE.search(target):
+            return m.group(0)  # attachment, not a page: leave it alone
+        md_suffix = ""
+        if target.lower().endswith(".md"):
+            md_suffix, target = target[-3:], target[:-3]
         key = target.lower()
         if target in path_map:
             new = path_map[target]
@@ -216,10 +292,25 @@ def rewrite_wikilinks(text, path_map, basename_map, current_file_rel, problems):
         elif key in ci_legacy_map:
             new = ci_legacy_map[key]
         else:
-            problems.append((current_file_rel, target))
+            problems.append((current_file_rel, target + md_suffix))
             return m.group(0)  # leave unchanged
-        return f"[[{new}{rest}]]"
-    return WIKILINK_RE.sub(repl, text)
+        return f"[[{new}{md_suffix}{rest}]]"
+
+    # Never rewrite inside fenced code blocks (``` or ~~~): examples stay verbatim.
+    out, fence = [], None
+    for line in text.splitlines(keepends=True):
+        fm = _FENCE_OPEN_RE.match(line)
+        if fence is None:
+            if fm:
+                fence = fm.group(1)
+                out.append(line)
+            else:
+                out.append(WIKILINK_RE.sub(repl, line))
+        else:
+            if fm and fm.group(1)[0] == fence[0] and len(fm.group(1)) >= len(fence):
+                fence = None
+            out.append(line)
+    return "".join(out)
 
 
 def main():
@@ -242,18 +333,30 @@ def main():
     # Wikilink rewrite pass
     rewritten_files = []
     problems = []
-    for p in sorted(VAULT.rglob("*.md")):
+    undecodable = []
+    for p in iter_md(VAULT):
         rel = p.relative_to(VAULT).as_posix()
         if any(part.startswith(".") for part in rel.split("/")):
             continue
         if rel == LOG_FILE:
             continue
-        raw = p.read_text(encoding="utf-8")
+        try:
+            # newline="" keeps CRLF pages CRLF when rewritten.
+            with open(p, encoding="utf-8", newline="") as f:
+                raw = f.read()
+        except UnicodeDecodeError as e:
+            # A rewriter must never round-trip a file it cannot decode: skip it.
+            undecodable.append(rel)
+            print(f"WARNING: {rel} is not valid UTF-8 ({e.reason} at byte {e.start}); "
+                  "its wikilinks were NOT rewritten — re-save it as UTF-8 and re-run",
+                  file=sys.stderr)
+            continue
         new_text = rewrite_wikilinks(raw, path_map, basename_map, rel, problems)
         if new_text != raw:
             rewritten_files.append(rel)
             if APPLY:
-                p.write_text(new_text, encoding="utf-8")
+                with open(p, "w", encoding="utf-8", newline="") as f:
+                    f.write(new_text)
 
     print(f"=== wikilink rewrite: {len(rewritten_files)} files would have body wikilinks updated ===")
     for f in rewritten_files[:20]:
@@ -261,6 +364,12 @@ def main():
     if len(rewritten_files) > 20:
         print(f"  ... and {len(rewritten_files)-20} more")
     print()
+
+    if undecodable:
+        print(f"=== skipped {len(undecodable)} non-UTF-8 files (links not rewritten) ===")
+        for f in undecodable:
+            print(f"  ! {f}")
+        print()
 
     if problems:
         print(f"=== unresolved wikilink targets ({len(problems)}) -- left as-is ===")
@@ -306,11 +415,12 @@ def main():
 
         # Update the manifest in lockstep so ingested_at survives the rename.
         manifest_path = VAULT / ".manifest.json"
-        if manifest_path.exists():
+        m = load_manifest(manifest_path, dry=False)
+        # Only legacy manifests carry per-page entries; the current marker has none.
+        if m is not None and m.get("sources"):
             old_to_new_md = {f"{o}.md": f"{n}.md" for o, n in path_map.items()}
             for legacy_no_ext, new_no_ext in LEGACY_WIKILINK_TARGETS.items():
                 old_to_new_md[f"{legacy_no_ext}.md"] = f"{new_no_ext}.md"
-            m = json.loads(manifest_path.read_text(encoding="utf-8"))
             new_sources = {}
             unresolved = []
             for old_key, entry in m.get("sources", {}).items():
@@ -335,5 +445,42 @@ def main():
         print("=== DRY_RUN -- no files written, no renames performed ===")
 
 
+# --- run log (copied verbatim into every script, like resolve_vault) ---------
+# One TSV line per run in ~/.obsidian-wiki/runs.tsv: when, script, cwd, seconds,
+# exit code, args, and any RUN_STATS the script filled in. Machine-local, never
+# inside a vault; `claude-history.py runs` summarizes it. WIKI_RUNLOG=0 disables.
+# Never raises: logging must not break the tool.
+RUN_STATS: dict = {}
+
+
+def log_run(t0: float, rc) -> None:
+    import os as _os, sys as _sys, time as _time
+    from datetime import datetime as _dt
+    if _os.environ.get("WIKI_RUNLOG") == "0":
+        return
+    try:
+        d = __import__("pathlib").Path.home() / ".obsidian-wiki"
+        d.mkdir(exist_ok=True)
+        fields = [_dt.now().isoformat(timespec="seconds"),
+                  __import__("pathlib").Path(_sys.argv[0]).name, _os.getcwd(),
+                  f"{_time.monotonic() - t0:.2f}", str(rc), " ".join(_sys.argv[1:])[:300],
+                  " ".join(f"{k}={v}" for k, v in RUN_STATS.items())]
+        with open(d / "runs.tsv", "a", encoding="utf-8") as fh:
+            fh.write("\t".join(f.replace("\t", " ").replace("\n", " ") for f in fields) + "\n")
+    except Exception:
+        pass
+# --- end run log -------------------------------------------------------------
+
+
 if __name__ == "__main__":
-    main()
+    import time as _time
+    _t0, _rc = _time.monotonic(), 1
+    try:
+        _rc = main()
+        _rc = 0 if _rc is None else _rc
+    except SystemExit as _e:
+        _rc = _e.code if isinstance(_e.code, int) else (0 if _e.code is None else 1)
+        raise
+    finally:
+        log_run(_t0, _rc)
+    sys.exit(_rc)
